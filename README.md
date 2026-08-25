@@ -45,7 +45,7 @@ nothing would look healthy to scripts.
 
 ## What state is it in?
 
-Phases 0 and 1 complete; phases 2+ unstarted. Concretely:
+Phases 0–2 complete; phases 3+ unstarted. Concretely:
 
 **Working**
 
@@ -70,22 +70,34 @@ Phases 0 and 1 complete; phases 2+ unstarted. Concretely:
   BLAKE2s (its digest core is Lazy-buffered). The implementation is generic
   over any 32-byte digest and validated against RFC 5869's SHA-256 vectors,
   including the zero-salt case Conveyance actually uses.
+- **Encrypted storage** (`conveyance-core::storage`, phase 2):
+  `executions.db` with the spec's hash-chained log schema — appends run
+  BEGIN IMMEDIATE and read the chain head *inside* the transaction, proven
+  fork-free by an 8-thread/8-connection contention test; verification
+  delegates to the phase-1 chain module. `pairings.db` with CRUD and the
+  derived `<phone-id>` handle (spec amendment). `identity.enc`: long-term
+  keys sealed with ChaCha20-Poly1305 under a DEK derived via HKDF-BLAKE2s
+  from a random KEK held in the OS keychain (`keyring` crate; Linux uses
+  the pure-Rust zbus backend). Keychain-unreachable is a typed error that
+  carries `conveyance/keychain_unavailable` for phase 7's refuse-to-start;
+  there is deliberately no passphrase fallback. All storage tests use a
+  mock provider; real-keychain behavior on Windows/macOS/Linux is compiled
+  but not exercised by CI.
 - **Config loading**, **platform paths**, **structured error model** as of
   phase 0.
 - **CI** — fmt + clippy (`-D warnings`) once, tests across
   windows/ubuntu/macos.
-- **Tests**: 68 passing, including official vectors for every primitive
-  that publishes them. Branch coverage on the crypto module: 100% (measured
-  with cargo-llvm-cov + nightly; every remaining uncovered line in the
-  workspace is a test-guard panic arm, an environment-dependent config path
-  outside this phase's criterion, or a stub main).
+- **Tests**: 91 passing. Branch coverage on the crypto module: 100%
+  (measured with cargo-llvm-cov + nightly); every remaining uncovered line
+  in the workspace is a test-guard panic arm, an environment-dependent
+  config path outside that criterion, or a stub main.
 
 **Not working / not started**
 
-- Everything above this layer: encrypted storage (phase 2), Noise sessions
-  (phase 3), wire protocol (phase 4), BLE (phase 5), pairing (phase 6),
-  the real daemon (phase 7), the real shim (phase 8), CLI and log diff
-  (phase 9), Android app (phase 10).
+- Everything above this layer: Noise sessions (phase 3), wire protocol
+  (phase 4), BLE (phase 5), pairing ceremony (phase 6), the real daemon
+  (phase 7), the real shim (phase 8), CLI and log diff (phase 9), Android
+  app (phase 10). `sessions.log` waits for phase 7, when sessions exist.
 - The two binaries are separate executables named after their crates. The
   unified `conveyance <subcommand>` command line from the spec arrives with
   the CLI phases; expect that consolidation then.

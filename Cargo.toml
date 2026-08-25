@@ -60,3 +60,20 @@ sha2 = "=0.10.8"
 # for astral-plane keys. See crypto/canonical_json.rs.
 zeroize = { version = "=1.9.0", features = ["derive"] }
 getrandom = "=0.4.3"
+#
+# Storage (phase 2). `bundled` compiles SQLite from source so no system
+# library is involved -- matches auditmcp, keeps cross-platform builds
+# and CI deterministic.
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+# Keychain backends are feature-gated per platform in keyring 4.x; chosen
+# deliberately rather than accepting whatever resolves. For Linux,
+# `zbus-secret-service-keyring-store` is the pure-Rust D-Bus path (the
+# alternative, `dbus-secret-service-keyring-store`, binds the C libdbus);
+# `windows-native` / `apple-native` are the OS credential managers.
+# `v1` is the crate's default API-version flag, kept on.
+keyring = { version = "=4.1.6", features = [
+    "v1",
+    "apple-native-keyring-store",
+    "windows-native-keyring-store",
+    "zbus-secret-service-keyring-store",
+] }
