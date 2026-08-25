@@ -31,3 +31,32 @@ toml = "=0.8.23"
 dirs = "=6.0.0"
 # Test-only, but declared here so the pin lives with the others.
 tempfile = "=3.27.0"
+#
+# Crypto stack (phase 1). Pins chosen as a mutually compatible SET, not
+# individually: the RustCrypto crates share the `digest` trait family, and
+# mixing majors across that family fails to compile in confusing ways.
+# sha2/blake2/hkdf stay on the digest-0.10 generation deliberately --
+# they are the versions these crates shipped and were audited in the wild
+# with, and blake2 has not published a digest-0.11 release to move to.
+# The dalek crates are consumed WITHOUT their rand features: Conveyance
+# generates entropy via getrandom directly, so no rand_core version
+# coupling exists anywhere in the stack.
+ed25519-dalek = "=3.0.0"
+x25519-dalek = { version = "=3.0.0", features = ["static_secrets"] }
+chacha20poly1305 = "=0.11.0"
+argon2 = { version = "=0.5.3", default-features = false, features = ["alloc"] }
+bip39 = "=2.2.2"
+# NOTE: hkdf/hmac crates were evaluated and rejected for phase 1: they
+# cannot wrap BLAKE2s (its digest core is Lazy-buffered; HmacCore requires
+# Eager), so HKDF-BLAKE2s is implemented in conveyance-core over raw
+# sha2/blake2 instead -- see crypto/recovery.rs. Revisit only alongside a
+# digest-generation bump of the whole stack.
+blake2 = "=0.10.6"
+sha2 = "=0.10.8"
+# Canonical JSON (RFC 8785) is implemented in conveyance-core rather than
+# via the serde_jcs crate: serde_jcs delegates key ordering to serde_json's
+# map flavor, which yields Unicode-code-point order instead of the UTF-16
+# code-unit order RFC 8785 mandates -- a silent signature-portability bug
+# for astral-plane keys. See crypto/canonical_json.rs.
+zeroize = { version = "=1.9.0", features = ["derive"] }
+getrandom = "=0.4.3"

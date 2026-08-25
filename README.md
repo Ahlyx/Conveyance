@@ -45,34 +45,47 @@ nothing would look healthy to scripts.
 
 ## What state is it in?
 
-Phase 0 complete; phases 1+ unstarted. Concretely:
+Phases 0 and 1 complete; phases 2+ unstarted. Concretely:
 
 **Working**
 
 - **Cargo workspace** with three crates: `conveyance-core` (shared
   foundations), `conveyance-daemon` and `conveyance-shim` (stub binaries,
   `--version` only).
-- **Config loading** (`conveyance-core::config`) — parses the spec's TOML
-  shape including `[[high_risk]]` rules, applies spec defaults for session
-  timers when sections are omitted. Parsing only: timer bound validation is
-  phase 9, so an out-of-range value loads without complaint today.
-- **Platform paths** (`conveyance-core::paths`) — config/data directories
-  per the spec's storage layout table. On Windows the data directory is
-  deliberately `%LOCALAPPDATA%`, not roaming, because logs and databases
-  are machine-bound state.
-- **Error model** (`conveyance-core::error`) — all eleven named error codes
-  from the spec, each serializable into the spec's exact five-field JSON
-  shape via `serde`. Handshake/peer-identity messages are fixed and generic
-  per the spec's "MUST NOT leak which validation failed" rule.
+- **Crypto core** (`conveyance-core::crypto`, phase 1): Ed25519 signing
+  (RFC 8032 vectors), X25519 DH (RFC 7748 vectors), ChaCha20-Poly1305 AEAD
+  for stored blobs (RFC 8439 vector), Argon2id KDF at the spec's parameters
+  (~85 ms per derivation on this dev machine — under the spec's 500 ms
+  tuning threshold; run `cargo run --release --example kdf_timing` to
+  measure yours), BIP-39 recovery → HKDF-BLAKE2s → identity keypairs
+  (TREZOR vectors), RFC 8785 canonical JSON, and the hash-chain
+  constructor/verifier from the Logging section. Secret types zeroize on
+  drop and redact their `Debug`.
+- **Canonical JSON is implemented in-tree, not via serde_jcs**: that crate
+  inherits key ordering from serde_json's map flavor (code-point order,
+  not the UTF-16 order RFC 8785 mandates) — a silent signature-portability
+  bug for astral-plane keys. Per the spec amendment, floats in canonical
+  input are rejected loudly rather than formatted.
+- **HKDF-BLAKE2s is also in-tree**: RustCrypto's `hkdf`/`hmac` cannot wrap
+  BLAKE2s (its digest core is Lazy-buffered). The implementation is generic
+  over any 32-byte digest and validated against RFC 5869's SHA-256 vectors,
+  including the zero-salt case Conveyance actually uses.
+- **Config loading**, **platform paths**, **structured error model** as of
+  phase 0.
 - **CI** — fmt + clippy (`-D warnings`) once, tests across
   windows/ubuntu/macos.
+- **Tests**: 68 passing, including official vectors for every primitive
+  that publishes them. Branch coverage on the crypto module: 100% (measured
+  with cargo-llvm-cov + nightly; every remaining uncovered line in the
+  workspace is a test-guard panic arm, an environment-dependent config path
+  outside this phase's criterion, or a stub main).
 
 **Not working / not started**
 
-- Everything else: crypto (phase 1), encrypted storage (phase 2), Noise
-  sessions (phase 3), wire protocol (phase 4), BLE (phase 5), pairing
-  (phase 6), the real daemon (phase 7), the real shim (phase 8), CLI and
-  log diff (phase 9), Android app (phase 10).
+- Everything above this layer: encrypted storage (phase 2), Noise sessions
+  (phase 3), wire protocol (phase 4), BLE (phase 5), pairing (phase 6),
+  the real daemon (phase 7), the real shim (phase 8), CLI and log diff
+  (phase 9), Android app (phase 10).
 - The two binaries are separate executables named after their crates. The
   unified `conveyance <subcommand>` command line from the spec arrives with
   the CLI phases; expect that consolidation then.

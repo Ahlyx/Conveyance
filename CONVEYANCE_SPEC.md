@@ -159,7 +159,7 @@ is given so future revisions can be reasoned about.
 | Recovery-phrase derivation | BIP-39 wordlist (English), 256-bit entropy = 24 words → HKDF-BLAKE2s → seed → Ed25519 + X25519 keypairs (deterministic) | Standard, well-understood UX. Users have seen it in every hardware wallet. |
 | HKDF-BLAKE2s parameters | Salt: omitted — treated as HashLen zero bytes per RFC 5869 §2.2. Info strings as listed in Recovery. L=32. | Cross-platform determinism requires both implementations to treat salt omission identically. |
 | Hash chain (approval and execution logs) | SHA-256, `hash = SHA256(prev_hash \|\| canonical_json(entry))` | Matches auditmcp for interoperability of the diff tool. |
-| Canonical JSON | RFC 8785 (JCS) | Deterministic serialization for hashing. |
+| Canonical JSON | RFC 8785 (JCS), with the value domain restricted to integers, strings, booleans, null, arrays, and objects. Float values in canonicalization input MUST be rejected with a clear error. | Deterministic serialization for hashing. The restriction exists because ECMAScript number formatting is a known cross-implementation divergence trap, and Conveyance's hashed content has no legitimate use for fractional numbers. Both sides MUST also sort object keys by UTF-16 code units (per RFC 8785 §3.2.3) rather than trusting any map's native iteration order. |
 
 **BLE-layer security is treated as untrusted.** The daemon and app MUST NOT
 rely on BLE pairing, LE Secure Connections, GATT encryption, or the
