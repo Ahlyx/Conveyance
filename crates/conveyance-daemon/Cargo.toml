@@ -1,0 +1,9 @@
+[package]
+name = "conveyance-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Conveyance daemon: pairing/session state and BLE connectivity to the phone"
+
+[dependencies]
+conveyance-core = { path = "../conveyance-core" }

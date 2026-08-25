@@ -1,0 +1,16 @@
+[package]
+name = "conveyance-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared foundations for Conveyance: platform paths, config, error model"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+dirs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

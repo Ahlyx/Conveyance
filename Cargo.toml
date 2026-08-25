@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/conveyance-core",
+    "crates/conveyance-daemon",
+    "crates/conveyance-shim",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Floor we actually verify against (local + CI), not a theoretical minimum.
+# Edition 2024 would only require 1.85; dependencies are what push this up.
+# Recorded here so cargo enforces it with a clear error instead of letting
+# an older toolchain produce confusing failures.
+rust-version = "1.90"
+
+# Pinned with `=` so the manifest itself states the tested version. Cargo.lock
+# records the resolved graph; these pins record intent. Bump deliberately,
+# never transitively.
+#
+# Runtime decision (recorded phase 0): async work will use tokio. The pin
+# enters [workspace.dependencies] in phase 3, when the first crate consumes
+# it -- an unused entry here would sit in Cargo.lock implying a dependency
+# that does not exist yet.
+[workspace.dependencies]
+serde = "=1.0.229"
+serde_json = "=1.0.151"
+thiserror = "=2.0.20"
+toml = "=0.8.23"
+dirs = "=6.0.0"
+# Test-only, but declared here so the pin lives with the others.
+tempfile = "=3.27.0"

@@ -1,0 +1,6 @@
+# Normalize everything to LF in-repo. Rust/rustfmt tooling assumes it, and
+# mixed endings across three dev platforms produce noisy diffs.
+* text=auto eol=lf
+
+# Not text, whatever they look like.
+*.db binary

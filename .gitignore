@@ -1,0 +1,13 @@
+/target
+/.vscode
+__pycache__/
+*.db
+*.db-wal
+*.db-shm
+
+# Local-only config used while developing; the real one lives in the
+# platform config directory (see README "What it needs").
+/config.toml
+
+# Personal standing instructions (not project-specific)
+ENGINEERING-GUARDRAILS.md

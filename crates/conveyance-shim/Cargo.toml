@@ -1,0 +1,9 @@
+[package]
+name = "conveyance-shim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Conveyance MCP shim: JSON-RPC over stdio on behalf of MCP clients"
+
+[dependencies]
+conveyance-core = { path = "../conveyance-core" }
