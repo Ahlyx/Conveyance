@@ -524,8 +524,15 @@ SessionEnd { req_id: <16 bytes>, reason: <string> }
 The Ed25519 signature over approval and execute responses is redundant
 with the Noise authentication for confidentiality-and-integrity in
 transit, but it makes each response a portable, verifiable artifact that
-survives outside the session — critical for the log-diff use case, and
+survives outside the session -- critical for the log-diff use case, and
 for repudiation defense.
+
+Signature payload construction rules: optional fields that are absent
+MUST be omitted from the canonical JSON entirely, not rendered as JSON
+null. This applies to `reason` in ApprovalResponse, `http_status` in
+ExecuteResponse, and any future optional fields. Both Rust and Android
+implementations MUST follow this rule identically; a null on one side
+and an omission on the other produces non-verifying signatures.
 
 ### Approval-execute binding
 
@@ -538,6 +545,11 @@ gets approval, then substitutes different bytes for execution.
 
 The phone MUST retain approved-not-yet-executed `req_id`s for at most 5
 minutes; older ones expire.
+
+Approved `req_id`s are consumed on first successful validation. A second
+ExecuteRequest referencing an already-consumed req_id MUST be rejected
+with `approval_mismatch` and logged as a replay attempt. Approvals do
+not survive their first execution; retries require re-approval.
 
 ---
 
