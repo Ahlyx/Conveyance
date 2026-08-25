@@ -18,7 +18,7 @@ You need the [Rust toolchain](https://rustup.rs/) (stable 1.90 or newer;
 the workspace is edition 2024 with a declared MSRV of 1.90).
 
 ```bash
-git clone <this repo>
+git clone https://github.com/Ahlyx/Conveyance
 cd conveyance
 cargo build --release
 ```
