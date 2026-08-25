@@ -534,6 +534,17 @@ transit, but it makes each response a portable, verifiable artifact that
 survives outside the session -- critical for the log-diff use case, and
 for repudiation defense.
 
+PairingConfirm and PairingAck messages travel through the same
+WireMessage envelope as post-handshake messages, tagged
+`pairing_confirm` and `pairing_ack` respectively. They differ from other
+messages in three ways: (1) they are exchanged before any Noise session
+exists, so they travel as plaintext CBOR over the framing layer directly
+(not through a Noise transport); (2) their integrity depends entirely on
+the embedded Ed25519 signatures rather than session authentication; (3)
+their signature payload is raw byte concatenation of
+"conveyance-pair-v1" and the field sequence specified in the pairing
+ceremony section, not canonical JSON.
+
 Signature payload construction rules: optional fields that are absent
 MUST be omitted from the canonical JSON entirely, not rendered as JSON
 null. This applies to `reason` in ApprovalResponse, `http_status` in
