@@ -12,3 +12,7 @@ __pycache__/
 
 # Personal standing instructions (not project-specific)
 ENGINEERING-GUARDRAILS.md
+
+# Project specific specs
+CONVEYANCE_PHASES.md
+CONVEYANCE_SPEC.md
