@@ -22,6 +22,11 @@ zeroize.workspace = true
 getrandom.workspace = true
 rusqlite.workspace = true
 keyring.workspace = true
+tokio.workspace = true
+snow.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# test-util enables tokio::time::pause()/advance() for deterministic
+# timer tests. Dev-only: production builds never see it.
+tokio = { workspace = true, features = ["test-util"] }

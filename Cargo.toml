@@ -77,3 +77,18 @@ keyring = { version = "=4.1.6", features = [
     "windows-native-keyring-store",
     "zbus-secret-service-keyring-store",
 ] }
+#
+# Runtime decision recorded in phase 0, consumed from phase 3 onward:
+# tokio drives session timers (and later, transport/IPC). Features are
+# the minimal set actually used; if a phase reaches for net or io-util,
+# that is a deliberate decision to record here, not an accident.
+tokio = { version = "=1.53.1", features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "sync",
+] }
+#
+# Noise sessions. Pattern string is fixed by the spec:
+# Noise_KK_25519_ChaChaPoly_BLAKE2s.
+snow = "=0.10.0"

@@ -45,7 +45,7 @@ nothing would look healthy to scripts.
 
 ## What state is it in?
 
-Phases 0–2 complete; phases 3+ unstarted. Concretely:
+Phases 0–3 complete; phases 4+ unstarted. Concretely:
 
 **Working**
 
@@ -83,21 +83,33 @@ Phases 0–2 complete; phases 3+ unstarted. Concretely:
   there is deliberately no passphrase fallback. All storage tests use a
   mock provider; real-keychain behavior on Windows/macOS/Linux is compiled
   but not exercised by CI.
+- **Sessions** (`conveyance-core::session`, phase 3): Noise_KK
+  (`Noise_KK_25519_ChaChaPoly_BLAKE2s`, via snow) with the PC fixed as
+  responder and the phone as initiator; a pure state machine implementing
+  the spec's lifecycle diagram exhaustively (every legal and illegal
+  transition pinned by tests); idle-warning/idle/hard-cap timers on tokio,
+  verified at exact thresholds under paused time, with the hard cap proven
+  to fire through continuous activity. `SessionParams::validated()` is the
+  only constructor external code can reach — spec minimums/maximums are
+  not bypassable through config (fail-closed rejection). Cold-start is
+  structural: no method produces output without passing the ACTIVE check,
+  so `conveyance/no_session` falls out automatically. Handshake failures
+  collapse to the generic `handshake_failed` per the spec's no-leak rule.
 - **Config loading**, **platform paths**, **structured error model** as of
   phase 0.
 - **CI** — fmt + clippy (`-D warnings`) once, tests across
   windows/ubuntu/macos.
-- **Tests**: 91 passing. Branch coverage on the crypto module: 100%
+- **Tests**: 114 passing. Branch coverage on the crypto module: 100%
   (measured with cargo-llvm-cov + nightly); every remaining uncovered line
   in the workspace is a test-guard panic arm, an environment-dependent
   config path outside that criterion, or a stub main.
 
 **Not working / not started**
 
-- Everything above this layer: Noise sessions (phase 3), wire protocol
-  (phase 4), BLE (phase 5), pairing ceremony (phase 6), the real daemon
-  (phase 7), the real shim (phase 8), CLI and log diff (phase 9), Android
-  app (phase 10). `sessions.log` waits for phase 7, when sessions exist.
+- Everything above this layer: wire protocol & framing (phase 4), BLE
+  (phase 5), pairing ceremony (phase 6), the real daemon (phase 7), the
+  real shim (phase 8), CLI and log diff (phase 9), Android app (phase 10).
+  `sessions.log` waits for phase 7, when sessions exist.
 - The two binaries are separate executables named after their crates. The
   unified `conveyance <subcommand>` command line from the spec arrives with
   the CLI phases; expect that consolidation then.
