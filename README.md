@@ -41,8 +41,7 @@ nothing would look healthy to scripts.
   (`%APPDATA%\conveyance\config.toml` on Windows, XDG equivalent elsewhere)
   and an available OS keychain. A missing config file is an error by
   design; nothing is auto-created behind your back.
-- License is not yet chosen (`MIT`/`Apache-2.0` are the candidates named in
-  the spec); no LICENSE file exists yet for that reason.
+- MIT licensed; see `LICENSE`.
 
 ## What state is it in?
 

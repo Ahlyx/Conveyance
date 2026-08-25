@@ -155,8 +155,9 @@ is given so future revisions can be reasoned about.
 | Long-term identity signatures | Ed25519 | Standard, fast, no parameter choices to get wrong. |
 | Ephemeral key exchange in pairing | X25519 (as part of Noise) | Same curve as identity DH. |
 | Stored-blob AEAD (at rest) | ChaCha20-Poly1305 | Consistency with wire AEAD. |
-| Passphrase KDF | Argon2id, m=65536 (64 MiB), t=3, p=1 | Memory-hard, resistant to GPU/ASIC attack. Tune upward on target hardware if a full derivation completes in under 500 ms. |
+| Passphrase KDF | Argon2id, m=65536 (64 MiB), t=3, p=1; output length 32 bytes (feeds a ChaCha20-Poly1305 DEK); salt caller-supplied, 16 bytes | Memory-hard, resistant to GPU/ASIC attack. Tune upward on target hardware if a full derivation completes in under 500 ms. |
 | Recovery-phrase derivation | BIP-39 wordlist (English), 256-bit entropy = 24 words → HKDF-BLAKE2s → seed → Ed25519 + X25519 keypairs (deterministic) | Standard, well-understood UX. Users have seen it in every hardware wallet. |
+| HKDF-BLAKE2s parameters | Salt: omitted — treated as HashLen zero bytes per RFC 5869 §2.2. Info strings as listed in Recovery. L=32. | Cross-platform determinism requires both implementations to treat salt omission identically. |
 | Hash chain (approval and execution logs) | SHA-256, `hash = SHA256(prev_hash \|\| canonical_json(entry))` | Matches auditmcp for interoperability of the diff tool. |
 | Canonical JSON | RFC 8785 (JCS) | Deterministic serialization for hashing. |
 
@@ -589,6 +590,12 @@ identity_ed25519  = HKDF-BLAKE2s(seed, info="conveyance-v1-identity-ed25519", L=
 identity_x25519   = HKDF-BLAKE2s(seed, info="conveyance-v1-identity-x25519", L=32)
 ```
 
+HKDF salt is omitted in all three uses above and therefore zero-filled
+per RFC 5869 §2.2. This is deliberate and load-bearing: a second
+implementation that substitutes an empty string, a null salt of different
+length, or any domain-separated constant produces different keys with no
+error anywhere.
+
 Recovery on a new device: user installs Conveyance, chooses "Restore from
 recovery phrase", enters 24 words. App validates the checksum (BIP-39
 built-in), derives the identity keys, restores.
@@ -737,6 +744,15 @@ CREATE INDEX idx_timestamp ON entries(timestamp);
 Hash chaining is identical to auditmcp:
 `hash = SHA256(prev_hash || canonical_json(entries_row_without_hash))`.
 Genesis `prev_hash` is 32 zero bytes.
+
+The `entries_row_without_hash` clause is scoped to event content only:
+`{req_id, event_type, payload_json, timestamp}`. The `id` column is
+DB-assigned metadata and MUST NOT be part of the hashed content. The
+`prev_hash` column appears in the SHA-256 formula as the byte prefix
+(see the formula), never inside the JSON. This scope matters: two
+independently generated logs of the same events must produce the same
+chain, which is what makes the diff tool's row-for-row comparison
+possible.
 
 ### Diff tool
 
@@ -1136,6 +1152,5 @@ the responsibility they are taking on.
 
 ## License
 
-TBD by author. MIT or Apache-2.0 recommended for consistency with
-auditmcp and to reduce friction for other projects wanting to build on
-the wire protocol.
+MIT. The license was chosen for consistency with auditmcp and to reduce
+friction for other projects wanting to build on the wire protocol.
