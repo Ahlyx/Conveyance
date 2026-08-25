@@ -10,9 +10,8 @@ __pycache__/
 # platform config directory (see README "What it needs").
 /config.toml
 
+# Fuzzing artifacts
+/fuzz/target
+
 # Personal standing instructions (not project-specific)
 ENGINEERING-GUARDRAILS.md
-
-# Project specific specs
-CONVEYANCE_PHASES.md
-CONVEYANCE_SPEC.md
