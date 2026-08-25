@@ -330,8 +330,13 @@ NO_SESSION  ------ user starts session (phone-side) ------> HANDSHAKING
                                 idle timeout                    |
                                         |     explicit end,     |
                                         v     kill switch,      |
-                                     ENDED <---BLE disconnect---+
+                                      ENDED <---BLE disconnect---+
 ```
+
+Aborting out of HANDSHAKING -- handshake failure, peer disappearance,
+or user cancellation before completion -- returns to NO_SESSION, not
+ENDED. A session that never completed its handshake never existed;
+ENDED implies a lifecycle that reached at least ACTIVE.
 
 ### Timers
 
