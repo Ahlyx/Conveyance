@@ -633,6 +633,10 @@ conveyance unpair <phone-id>
 Removes the phone from the paired database. The phone continues to
 believe it is paired but cannot establish sessions.
 
+`<phone-id>`: first 16 lowercase hex characters of SHA-256(phone_id_pub).
+Shown by `conveyance status`; stable across DB rebuilds since it is
+derived from the pubkey.
+
 Revocation triggers:
 
 - User loses phone → run `unpair` on PC → pair replacement phone.
