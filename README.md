@@ -45,7 +45,7 @@ nothing would look healthy to scripts.
 
 ## What state is it in?
 
-Phases 0–3 complete; phases 4+ unstarted. Concretely:
+Phases 0–4 complete; phases 5+ unstarted. Concretely:
 
 **Working**
 
@@ -95,21 +95,38 @@ Phases 0–3 complete; phases 4+ unstarted. Concretely:
   structural: no method produces output without passing the ACTIVE check,
   so `conveyance/no_session` falls out automatically. Handshake failures
   collapse to the generic `handshake_failed` per the spec's no-leak rule.
+- **Wire protocol** (`conveyance-core::wire`, phase 4): all ten message
+  types from the spec as CBOR types (string-tagged envelope; `ReqId` is a
+  16-byte CBOR byte string on the wire, lowercase hex in signature JSON —
+  both contexts pinned by tests). Signatures cover
+  `"context" || canonical_json(minus-signature)` with absent optional
+  fields omitted entirely (spec amendment). Framing: 6-byte headers,
+  START/END/ACK flags, strict sequence continuity, 128 KiB reassembly cap.
+  Approval-execute binding enforces byte-for-byte payload equality after
+  canonicalization, 5-minute expiry, and consume-on-use (spec amendment) —
+  replays are distinguishable from unknown ids for logging. `params`/`body`
+  values are validated into the canonical-JSON domain at construction;
+  floats are rejected with a distinct error so MCP clients can recover.
+- **Fuzzing**: coverage-guided libFuzzer targets under `fuzz/` (run via
+  WSL2 Ubuntu locally; Linux CI later). Phase 4 verification ran both
+  targets for 180 s each (~93 million executions combined) against the
+  framing and CBOR parsers: zero crashes. A deterministic 70k-iteration
+  mutation soak also runs in normal `cargo test` on every platform.
 - **Config loading**, **platform paths**, **structured error model** as of
   phase 0.
 - **CI** — fmt + clippy (`-D warnings`) once, tests across
   windows/ubuntu/macos.
-- **Tests**: 114 passing. Branch coverage on the crypto module: 100%
+- **Tests**: 140 passing. Branch coverage on the crypto module: 100%
   (measured with cargo-llvm-cov + nightly); every remaining uncovered line
   in the workspace is a test-guard panic arm, an environment-dependent
   config path outside that criterion, or a stub main.
 
 **Not working / not started**
 
-- Everything above this layer: wire protocol & framing (phase 4), BLE
-  (phase 5), pairing ceremony (phase 6), the real daemon (phase 7), the
-  real shim (phase 8), CLI and log diff (phase 9), Android app (phase 10).
-  `sessions.log` waits for phase 7, when sessions exist.
+- Everything above this layer: BLE transport (phase 5), pairing ceremony
+  (phase 6), the real daemon (phase 7), the real shim (phase 8), CLI and
+  log diff (phase 9), Android app (phase 10). `sessions.log` waits for
+  phase 7, when sessions exist.
 - The two binaries are separate executables named after their crates. The
   unified `conveyance <subcommand>` command line from the spec arrives with
   the CLI phases; expect that consolidation then.

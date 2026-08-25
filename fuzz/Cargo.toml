@@ -1,0 +1,33 @@
+[package]
+name = "conveyance-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Detach from the repository workspace: the fuzz crate pins its own
+# dependency graph against nightly libFuzzer and must not inherit
+# workspace-level pins.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.conveyance-core]
+path = "../crates/conveyance-core"
+
+[[bin]]
+name = "frame_ingest"
+path = "fuzz_targets/frame_ingest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "message_decode"
+path = "fuzz_targets/message_decode.rs"
+test = false
+doc = false
+bench = false

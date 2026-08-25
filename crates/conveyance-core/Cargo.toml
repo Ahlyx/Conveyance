@@ -24,6 +24,7 @@ rusqlite.workspace = true
 keyring.workspace = true
 tokio.workspace = true
 snow.workspace = true
+ciborium.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

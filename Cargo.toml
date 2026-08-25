@@ -92,3 +92,7 @@ tokio = { version = "=1.53.1", features = [
 # Noise sessions. Pattern string is fixed by the spec:
 # Noise_KK_25519_ChaChaPoly_BLAKE2s.
 snow = "=0.10.0"
+#
+# Wire protocol (phase 4): CBOR for message encoding. ciborium is
+# serde-native and handles byte strings + tagged enums cleanly.
+ciborium = "=0.2.2"
