@@ -96,3 +96,11 @@ snow = "=0.10.0"
 # Wire protocol (phase 4): CBOR for message encoding. ciborium is
 # serde-native and handles byte strings + tagged enums cleanly.
 ciborium = "=0.2.2"
+#
+# BLE transport (phase 5), feature-gated: see conveyance-core's [features].
+# uuid is consumed by the BLE module (GATT UUIDs) and its v4 feature by
+# the probe example/tests only.
+btleplug = "=0.12.0"
+uuid = { version = "=1.25.0", features = ["v4"] }
+# StreamExt for btleplug's notification stream (BLE feature only).
+futures-lite = "=2.6.1"

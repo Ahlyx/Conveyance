@@ -17,4 +17,5 @@ pub mod error;
 pub mod paths;
 pub mod session;
 pub mod storage;
+pub mod transport;
 pub mod wire;

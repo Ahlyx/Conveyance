@@ -45,7 +45,7 @@ nothing would look healthy to scripts.
 
 ## What state is it in?
 
-Phases 0–4 complete; phases 5+ unstarted. Concretely:
+Phases 0–5 complete; phases 6+ unstarted. Concretely:
 
 **Working**
 
@@ -112,21 +112,37 @@ Phases 0–4 complete; phases 5+ unstarted. Concretely:
   targets for 180 s each (~93 million executions combined) against the
   framing and CBOR parsers: zero crashes. A deterministic 70k-iteration
   mutation soak also runs in normal `cargo test` on every platform.
+- **BLE transport** (`conveyance-core::transport`, phase 5): a `Link`/
+  `Transport` trait pair (static generics, native async fns) that phase-4
+  framing runs over unchanged. Mock implementation (cross-wired bounded
+  channels) carries the shared test suite in CI: full-stack echo, typed
+  mid-reassembly disconnection on both sides, real backpressure. Real
+  implementation via btleplug behind **feature `ble` (default OFF)** —
+  scans for the pinned service UUID (list OR service-data match, per
+  spec), connects with timeout, resolves both characteristics, subscribes
+  notifications, writes without-response with a one-shot WithResponse
+  fallback for WinRT quirks. UUIDs are pinned in the spec and guarded by
+  an anti-typo test. Manual verification against an nRF Connect stub:
+
+  ```bash
+  cargo run --release --features ble --example ble_probe
+  ```
+
 - **Config loading**, **platform paths**, **structured error model** as of
   phase 0.
 - **CI** — fmt + clippy (`-D warnings`) once, tests across
   windows/ubuntu/macos.
-- **Tests**: 140 passing. Branch coverage on the crypto module: 100%
-  (measured with cargo-llvm-cov + nightly); every remaining uncovered line
-  in the workspace is a test-guard panic arm, an environment-dependent
-  config path outside that criterion, or a stub main.
+- **Tests**: 146 gateless / 148 with `--features ble`. Branch coverage on
+  the crypto module: 100% (measured with cargo-llvm-cov + nightly); every
+  remaining uncovered line in the workspace is a test-guard panic arm, an
+  environment-dependent config path outside that criterion, or a stub main.
 
 **Not working / not started**
 
-- Everything above this layer: BLE transport (phase 5), pairing ceremony
-  (phase 6), the real daemon (phase 7), the real shim (phase 8), CLI and
-  log diff (phase 9), Android app (phase 10). `sessions.log` waits for
-  phase 7, when sessions exist.
+- Everything above this layer: pairing ceremony (phase 6), the real
+  daemon (phase 7), the real shim (phase 8), CLI and log diff (phase 9),
+  Android app (phase 10). `sessions.log` waits for phase 7. Real-BLE
+  behavior is compile-tested plus manually probed; CI covers the mock.
 - The two binaries are separate executables named after their crates. The
   unified `conveyance <subcommand>` command line from the spec arrives with
   the CLI phases; expect that consolidation then.

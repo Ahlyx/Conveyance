@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "conveyance-core"
 version.workspace = true
 edition.workspace = true
@@ -25,6 +25,16 @@ keyring.workspace = true
 tokio.workspace = true
 snow.workspace = true
 ciborium.workspace = true
+btleplug = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+futures-lite = { workspace = true, optional = true }
+
+[features]
+# Real BLE transport (btleplug). Default OFF so that: (a) CI and every
+# existing test run without platform BLE stacks; (b) a future Android
+# UniFFI build of this crate does not drag a BLE central implementation
+# onto the phone. The daemon crate opts in.
+ble = ["dep:btleplug", "dep:uuid", "dep:futures-lite"]
 
 [dev-dependencies]
 tempfile.workspace = true
