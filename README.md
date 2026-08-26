@@ -45,7 +45,11 @@ nothing would look healthy to scripts.
 
 ## What state is it in?
 
-Phases 0–5 complete; phases 6+ unstarted. Concretely:
+Phases 0-6 complete; phases 7+ unstarted. Concretely:
+
+**Working**
+
+- **conveyance CLI (phase 6)**: `conveyance pair [--name <hostname>]` runs the full pairing ceremony -- generates/loads the PC identity, displays a scannable QR (Unicode blocks, EC level H) for 60 seconds, waits for a phone to advertise + connect + confirm, verifies PairingConfirm against the QR's values, replies with a signed Ack, persists the phone into pairings.db. Exit 0 on success; clean typed failure otherwise. Requires --features ble at build time. Verified live on this machine: banner -> QR render -> 60 s scan -> clean expiry. Full success path covered by mock-phone tests; a real phone pairing awaits phase 10.
 
 **Working**
 

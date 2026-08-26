@@ -1,0 +1,19 @@
+[package]
+name = "conveyance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Conveyance CLI: pair, and later daemon/shim/log subcommands"
+
+[[bin]]
+name = "conveyance"
+path = "src/main.rs"
+
+[dependencies]
+conveyance-core = { path = "../conveyance-core" }
+clap.workspace = true
+tokio.workspace = true
+
+[features]
+# Real BLE for `pair`. Default OFF (see core); release builds enable it.
+ble = ["conveyance-core/ble"]

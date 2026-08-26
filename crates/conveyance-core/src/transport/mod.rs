@@ -23,6 +23,7 @@
 //!   Message splitting/reassembly belongs to phase 4's framing layer,
 //!   which runs unchanged over any `Link`.
 
+pub mod ids;
 pub mod mock;
 
 #[cfg(feature = "ble")]

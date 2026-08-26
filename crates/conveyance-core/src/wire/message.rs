@@ -238,6 +238,8 @@ pub enum WireMessage {
     Ping(Ping),
     Pong(Pong),
     SessionEnd(SessionEnd),
+    PairingConfirm(super::super::pairing::messages::PairingConfirm),
+    PairingAck(super::super::pairing::messages::PairingAck),
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +422,7 @@ fn signing_payload<T: Serialize>(context: &[u8], msg: &T) -> Result<Vec<u8>, Pro
 
 /// 64-byte signature arrays: bytes on CBOR, hex on JSON (same dual-context
 /// rule as ReqId).
-mod signature_serde {
+pub(crate) mod signature_serde {
     use super::*;
 
     pub fn serialize<S: Serializer>(sig: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {

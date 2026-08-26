@@ -28,12 +28,7 @@ use uuid::Uuid;
 
 use super::{Link, Transport, TransportError};
 
-/// Pinned in CONVEYANCE_SPEC.md ("Wire protocol" / BLE topology) and
-/// permanent for v1: changing any of these breaks pairings in the wild.
-/// The anti-typo test below asserts these strings match the spec table.
-pub const SERVICE_UUID: &str = "709031fe-abea-437f-801e-dc6872723b1f";
-pub const PC_TO_PHONE_TX_UUID: &str = "56d373b8-1dcf-4107-894b-b4888ff0db3f";
-pub const PHONE_TO_PC_TX_UUID: &str = "b4b10ea8-450c-47bd-93d9-065bb67e1bc9";
+pub use super::ids::{PC_TO_PHONE_TX_UUID, PHONE_TO_PC_TX_UUID, SERVICE_UUID};
 
 pub fn service_uuid() -> Uuid {
     Uuid::parse_str(SERVICE_UUID).expect("pinned constant must parse")
@@ -278,39 +273,5 @@ impl Link for BleLink {
                 eprintln!("ble shutdown disconnect error: {e}");
             }
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Anti-typo guard: the constants must equal the spec table verbatim.
-    #[test]
-    fn pinned_uuids_match_the_spec_strings() {
-        assert_eq!(SERVICE_UUID, "709031fe-abea-437f-801e-dc6872723b1f");
-        assert_eq!(PC_TO_PHONE_TX_UUID, "56d373b8-1dcf-4107-894b-b4888ff0db3f");
-        assert_eq!(PHONE_TO_PC_TX_UUID, "b4b10ea8-450c-47bd-93d9-065bb67e1bc9");
-
-        // And they parse into the type btleplug matches on.
-        for s in [SERVICE_UUID, PC_TO_PHONE_TX_UUID, PHONE_TO_PC_TX_UUID] {
-            Uuid::parse_str(s).expect("pinned UUIDs must parse");
-        }
-
-        // Distinctness: three different objects, not copy-paste slips.
-        assert_ne!(SERVICE_UUID, PC_TO_PHONE_TX_UUID);
-        assert_ne!(SERVICE_UUID, PHONE_TO_PC_TX_UUID);
-        assert_ne!(PC_TO_PHONE_TX_UUID, PHONE_TO_PC_TX_UUID);
-    }
-
-    #[test]
-    fn version_nibbles_are_v4_shaped() {
-        // Random V4 UUIDs carry version 4 in the 13th hex digit and the
-        // RFC 4122 variant in bits 6-7 of the 9th byte. Guards against
-        // someone replacing these with name-based/zeroed values later.
-        let s = Uuid::parse_str(SERVICE_UUID).unwrap();
-        let bytes = s.as_bytes();
-        assert_eq!(bytes[6] >> 4, 0b0100, "version nibble must be 4");
-        assert_eq!(bytes[8] >> 6, 0b10, "variant must be RFC 4122");
     }
 }

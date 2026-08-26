@@ -25,6 +25,9 @@ keyring.workspace = true
 tokio.workspace = true
 snow.workspace = true
 ciborium.workspace = true
+qrcode.workspace = true
+base64.workspace = true
+bloomfilter.workspace = true
 btleplug = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 futures-lite = { workspace = true, optional = true }
