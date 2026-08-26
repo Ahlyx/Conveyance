@@ -1,4 +1,63 @@
 # Conveyance — Phased Implementation Plan
+  Better to have 12 clean phases than 10 messy ones.
+- If a phase turns out to be much bigger than expected, split it.
+## Phase 7 � Daemon binary & IPC
+
+Split into two sub-phases (7.0, 7.1) during planning: the original
+single phase composed six prior modules plus three new concerns (IPC,
+long-running session ownership, request routing), which exceeded one
+review gate.
+
+### Phase 7.0 � Daemon skeleton, IPC & session lifecycle
+
+**Scope.** Long-running daemon as a library function
+(`conveyance-daemon::daemon::run(config)`); config resolution and
+validation happen in the caller. Refuse-to-start chain in spec order
+(config -> data dirs -> keychain identity -> databases -> socket bind),
+each failure with an actionable message. Local-socket IPC server
+(interprocess crate; Unix domain sockets / named pipes) with a framed
+CBOR protocol: SessionStart, SessionEnd, CheckSession, Status plus
+responses; authenticated-request routing arrives in 7.1. Session
+lifecycle wired to phase 3 (responder-side Noise KK against a paired,
+advertising phone). CLI: `conveyance daemon`, `conveyance status`,
+`conveyance session start`, `conveyance session end`. Clean shutdown on
+SIGTERM/SIGINT/Ctrl-C: session ended and zeroized, DBs checkpointed,
+socket released, <=10 s drain.
+
+**Exit criteria.**
+- Daemon starts from config value; refuses to start (nonzero exit,
+  actionable stderr) when keychain unavailable or a database cannot be
+  opened.
+- IPC roundtrip works over a real local socket in CI on all three
+  platforms.
+- Cold-start: any request while NO_SESSION returns
+  `conveyance/no_session`.
+- Session start/end via IPC reach ACTIVE / NO_SESSION against the mock
+  phone; two concurrent IPC clients observe consistent state.
+- Shutdown is clean and restartable (no stale socket lock).
+
+### Phase 7.1 � Request routing & crash recovery
+
+**Scope.** AuthenticatedRequest and ListServices routed over an active
+session to the phone: ApprovalRequest -> signed ApprovalResponse ->
+ExecuteRequest -> signed ExecuteResponse -> executions.db rows ->
+IPC response. Signature verification on every phone message; denials
+and timeouts propagate as spec error codes. Startup sweep marks
+orphaned requests (`approval_request` without a terminal row) as
+`request_timeout`, distinguishing `crashed_before_terminal` from live
+timeouts in payload_json.
+
+**Exit criteria.**
+- Full authenticated_request flow against mock phone: correct log rows
+  on both sides, response body propagates to the shim.
+- Denied/expired approvals produce the right spec errors, no execution,
+  log rows recorded.
+- Crash mid-request: after restart the orphaned req_id is visible as
+  request_timeout with crashed_before_terminal reason.
+- Concurrent shims during one active request see consistent state.
+
+  Better to have 12 clean phases than 10 messy ones.
+# Conveyance — Phased Implementation Plan
 
 This document sits alongside `CONVEYANCE_SPEC.md` and breaks v1 into
 implementable phases. Each phase has a scope, a deliverable, exit
@@ -494,73 +553,8 @@ Follow persistent rules. Propose your plan before writing code.
 
 ---
 
-## Phase 7 — Daemon binary & IPC
-
-**Scope.** Long-running daemon binary. Local socket (Unix or named
-pipe) for shim IPC. Session state management. Full request routing:
-shim → daemon → phone (mock) → daemon → shim.
-
-**Deliverable.** `conveyance daemon` runs, holds session state,
-responds to IPC from a test client. Requests flow end to end (with
-mock phone).
-
-**Exit criteria.**
-
-- Daemon starts, loads config, opens keychain, opens databases, binds
-  local socket.
-- Refuses to start if keychain unavailable or DBs unopenable.
-- IPC protocol defined and stable.
-- Session start/end flows work.
-- `authenticated_request` flow works end-to-end against mock phone:
-  IPC in → session check → phone approval → phone execute → response
-  back → IPC out.
-- Daemon shutdown is clean: sessions ended, in-flight requests
-  marked, DBs flushed.
-- Additional CLI: `conveyance status`, `conveyance session end`.
-
-**Prompt.**
-
-```
-Phase 7 of Conveyance: daemon binary.
-
-Scope:
-- Implement the daemon as a long-running binary that integrates
-  everything from phases 0-6.
-- Local socket for shim IPC: use the `interprocess` crate for
-  cross-platform Unix socket / named pipe abstraction.
-- Define the daemon-shim IPC protocol — this is internal, not spec'd
-  externally. Use bincode or serde CBOR. Message types: SessionStart,
-  SessionEnd, AuthenticatedRequest, ListServices, CheckSession, plus
-  responses.
-- Session state lives in the daemon (per the spec's daemon+shim
-  rationale). Multiple shims connected to one daemon share this
-  state.
-- Full request routing: shim sends AuthenticatedRequest over IPC →
-  daemon checks session → daemon sends ApprovalRequest over Noise
-  session to phone → phone responds with ApprovalResponse → daemon
-  sends ExecuteRequest → phone responds with ExecuteResponse →
-  daemon logs to executions.db → daemon returns result over IPC to
-  shim.
-- Additional CLI commands: `conveyance status` (prints daemon
-  state), `conveyance session end` (ends active session).
-- Clean shutdown: matches auditmcp's approach — SIGTERM/SIGINT
-  handled, sessions ended, in-flight requests marked as timeout, DB
-  writes flushed, up to 10s wait.
-
-Testing:
-- IPC roundtrip.
-- Session start/end via IPC.
-- Full request flow with mock phone: correct log entries on both
-  sides, correct response propagation.
-- Cold-start: IPC request with no session → correct error.
-- Daemon crash mid-request: on restart, incomplete request is
-  visible in log as deferred/timeout.
-- Concurrent shims: two IPC clients see consistent session state.
-
-Follow persistent rules. Propose your plan before writing code.
-```
-
 ---
+
 
 ## Phase 8 — MCP shim binary
 
