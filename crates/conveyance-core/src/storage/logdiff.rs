@@ -37,9 +37,9 @@
 
 use serde::Deserialize;
 
+use crate::crypto::OsEntropy;
 use crate::crypto::canonical_json::canonicalize;
 use crate::crypto::sign::{IdentityPublicKey, IdentitySecretKey};
-use crate::crypto::OsEntropy;
 
 /// Context tag prepended to every signed phone-log row.
 pub const PHONE_LOG_CONTEXT: &[u8] = b"conveyance-phone-log-v1";
@@ -159,11 +159,10 @@ pub fn parse_phone_export(text: &str) -> Result<Vec<PhoneLogRow>, ExportParseErr
         })?;
         // Signatures arrive hex-encoded in JSON (no byte-array type);
         // uppercase is rejected so exports are byte-stable artifacts.
-        let signature =
-            hex_to_fixed::<64>(&raw.signature).ok_or_else(|| ExportParseError {
-                line: line_no,
-                reason: "signature must be 128 hex chars".into(),
-            })?;
+        let signature = hex_to_fixed::<64>(&raw.signature).ok_or_else(|| ExportParseError {
+            line: line_no,
+            reason: "signature must be 128 hex chars".into(),
+        })?;
         if raw.event_type.is_empty() {
             return Err(ExportParseError {
                 line: line_no,
@@ -216,8 +215,7 @@ impl PhoneLogRow {
 }
 
 /// Build one correctly signed row (tests and fixtures).
-#[allow(dead_code)]
-pub(crate) fn signed_row(
+pub fn signed_row(
     key: &IdentitySecretKey,
     req_id: [u8; 16],
     event_type: &str,
@@ -257,7 +255,6 @@ pub fn render_phone_export(rows: &[PhoneLogRow]) -> String {
 pub(crate) fn fixture_key() -> IdentitySecretKey {
     IdentitySecretKey::generate(&OsEntropy).expect("OS entropy available")
 }
-
 
 // ---- diff engine ---------------------------------------------------------------
 
@@ -339,7 +336,11 @@ impl DiffReport {
 /// Timestamp rule per spec: execution timestamped before its APPROVAL
 /// DECISION is anomalous. Comparison is against `approval_granted`
 /// (the moment consent existed), not the earlier request.
-pub fn diff_logs(pc_events: &[PcEvent], phone_rows: &[PhoneLogRow], phone_pub: &IdentityPublicKey) -> DiffReport {
+pub fn diff_logs(
+    pc_events: &[PcEvent],
+    phone_rows: &[PhoneLogRow],
+    phone_pub: &IdentityPublicKey,
+) -> DiffReport {
     let mut report = DiffReport::default();
 
     // ---- phone-side signature verification ---------------------------------
@@ -403,26 +404,23 @@ pub fn diff_logs(pc_events: &[PcEvent], phone_rows: &[PhoneLogRow], phone_pub: &
             continue;
         };
         // Rebuild the ExecuteResponse signing view: everything the wire
-        // signature covered except the signature itself.
+        // signature covered except the signature itself. Absent
+        // optionals must be OMITTED, not null (spec amendment).
         let mut unsigned = payload.clone();
         if let Some(obj) = unsigned.as_object_mut() {
             obj.remove("signature");
         }
-        let body_for_verify = match serde_json::json!({
+        let mut signing_view = serde_json::json!({
             "req_id": lower_hex(&ev.req_id),
             "status": unsigned.get("status").cloned().unwrap_or(serde_json::Value::Null),
             "http_status": unsigned.get("http_status").cloned().unwrap_or(serde_json::Value::Null),
             "body": unsigned.get("body").cloned().unwrap_or(serde_json::Value::Null),
             "executed_at": unsigned.get("executed_at").cloned().unwrap_or(serde_json::Value::Null),
-        }) {
-            v => v,
-        };
-        // Absent optionals must be OMITTED, not null (spec amendment):
-        // strip null http_status before canonicalizing.
-        let obj = body_for_verify.as_object().expect("object literal");
-        let mut cleaned = obj.clone();
-        cleaned.retain(|_, v| !v.is_null());
-        let Ok(canonical) = canonicalize(&serde_json::Value::Object(cleaned)) else {
+        });
+        if let Some(obj) = signing_view.as_object_mut() {
+            obj.retain(|_, v| !v.is_null());
+        }
+        let Ok(canonical) = canonicalize(&signing_view) else {
             report.signature_failures.push(SigFailure {
                 side: SigSide::Pc,
                 req_id: ev.req_id,
@@ -480,9 +478,7 @@ pub fn diff_logs(pc_events: &[PcEvent], phone_rows: &[PhoneLogRow], phone_pub: &
     report.missing_execution.sort_unstable();
     report.execution_without_approval.sort_unstable();
     report.open_requests.sort_unstable();
-    report
-    .timestamp_anomalies
-        .sort_by_key(|a| a.executed_at);
+    report.timestamp_anomalies.sort_by_key(|a| a.executed_at);
     report
         .signature_failures
         .sort_by(|a, b| a.side.cmp(&b.side).then(a.req_id.cmp(&b.req_id)));
@@ -572,7 +568,10 @@ mod tests {
         // Uppercase ONLY the hex payloads; field names stay lowercase so
         // the JSON itself parses and the hex rule is what fires.
         let line = render_phone_export(std::slice::from_ref(&good));
-        let uppered = line.replace(&lower_hex(&[0xAB; 64]), &lower_hex(&[0xAB; 64]).to_uppercase());
+        let uppered = line.replace(
+            &lower_hex(&[0xAB; 64]),
+            &lower_hex(&[0xAB; 64]).to_uppercase(),
+        );
         let err = parse_phone_export(&uppered).unwrap_err();
         assert!(
             err.reason.contains("hex"),

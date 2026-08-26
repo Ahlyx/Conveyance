@@ -13,8 +13,15 @@ path = "src/main.rs"
 conveyance-core = { path = "../conveyance-core" }
 conveyance-daemon = { path = "../conveyance-daemon" }
 conveyance-shim = { path = "../conveyance-shim" }
+serde_json.workspace = true
 clap.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+assert_cmd.workspace = true
+predicates.workspace = true
+rusqlite.workspace = true
 
 [features]
 # Real BLE for `pair`. Default OFF (see core); release builds enable it.

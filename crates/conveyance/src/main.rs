@@ -5,6 +5,8 @@
 //! call into their crates' library surfaces rather than duplicating
 //! logic here.
 
+mod logcmd;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -69,6 +71,83 @@ enum Command {
         #[arg(long)]
         socket: Option<String>,
     },
+    /// Remove a paired phone by id (shown in `conveyance status`).
+    Unpair {
+        phone_id: String,
+        /// Skip the interactive confirmation (non-interactive use).
+        #[arg(long)]
+        yes: bool,
+        /// Redirect storage under this directory (must match the
+        /// daemon's --data-dir).
+        #[arg(long)]
+        data_dir: Option<std::path::PathBuf>,
+    },
+    /// Query, verify, export, and reconcile the execution log.
+    Log {
+        #[command(subcommand)]
+        cmd: LogCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum LogCommand {
+    /// Query the execution log.
+    Query {
+        /// Only rows newer than this. Duration with required unit:
+        /// 45s, 30m, 2h, 1d.
+        #[arg(long)]
+        since: Option<String>,
+        /// Only rows belonging to this service/tool name.
+        #[arg(long)]
+        tool: Option<String>,
+        /// Only execute_result rows with this status (ok/error/denied).
+        #[arg(long)]
+        status: Option<String>,
+        /// Print full payloads instead of one-line summaries.
+        #[arg(long)]
+        verbose: bool,
+        /// Only security-relevant rows (timeouts, failed executions,
+        /// integrity notes).
+        #[arg(long)]
+        anomalous: bool,
+        #[arg(long)]
+        data_dir: Option<std::path::PathBuf>,
+    },
+    /// Walk the hash chain. Exit codes: 0 intact, 1 verification
+    /// failed, 2 chain intact but derived head metadata stale.
+    Verify {
+        /// Recompute derived metadata when stale. Dry run unless
+        /// --yes; refuses entirely if the chain itself is broken.
+        #[arg(long)]
+        repair: bool,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        data_dir: Option<std::path::PathBuf>,
+    },
+    /// Export the log as JSONL (for offline analysis or diffing).
+    Export {
+        #[arg(long, default_value = "jsonl")]
+        format: String,
+        /// Write to a file atomically instead of stdout.
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long)]
+        tool: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        data_dir: Option<std::path::PathBuf>,
+    },
+    /// Reconcile a signed phone export against the local execution
+    /// log. Exits nonzero on any security-relevant mismatch.
+    Diff {
+        phone_export: std::path::PathBuf,
+        #[arg(long)]
+        data_dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -103,6 +182,9 @@ fn data_dir() -> Result<std::path::PathBuf, String> {
     conveyance_core::paths::data_dir().map_err(|e| e.to_string())
 }
 
+// Used only by the BLE pairing flow; kept compiled so a --features ble
+// build cannot break on it.
+#[cfg_attr(not(feature = "ble"), allow(dead_code))]
 fn hostname_fallback() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
@@ -135,42 +217,143 @@ fn load_or_create_identity(
     }
 }
 
+/// A failed command: message for stderr plus the process exit code.
+/// Most commands are plain 0/1; `log verify` carries the spec's
+/// three-state 0/1/2.
+#[derive(Debug)]
+struct CliError {
+    message: String,
+    code: i32,
+}
+
+impl CliError {
+    fn fail(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            code: 1,
+        }
+    }
+
+    fn with_code(code: i32, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            code,
+        }
+    }
+}
+
+impl From<String> for CliError {
+    fn from(message: String) -> Self {
+        CliError::fail(message)
+    }
+}
+
 impl Command {
-    async fn run(self) -> Result<(), String> {
+    async fn run(self) -> Result<(), CliError> {
         match self {
             Command::Init { cmd } => match cmd {
-                Init::Identity { data_dir } => init_identity(data_dir),
+                Init::Identity { data_dir } => init_identity(data_dir).map_err(CliError::from),
             },
-            Command::Pair { name } => pair(name).await,
+            Command::Pair { name } => pair(name).await.map_err(CliError::from),
             Command::Daemon {
                 config,
                 socket,
                 data_dir,
                 mock_phone,
-            } => daemon(config, socket, data_dir, mock_phone).await,
-            Command::Status { socket } => status(client_socket(socket)?).await,
+            } => daemon(config, socket, data_dir, mock_phone)
+                .await
+                .map_err(CliError::from),
+            Command::Status { socket } => {
+                status(client_socket(socket)?).await.map_err(CliError::from)
+            }
             Command::Session { cmd } => match cmd {
-                SessionCommand::Start { socket } => {
-                    session_cmd(
-                        conveyance_daemon::ipc::IpcRequest::SessionStart,
-                        socket,
-                        "session started",
-                    )
-                    .await
-                }
-                SessionCommand::End { socket } => {
-                    session_cmd(
-                        conveyance_daemon::ipc::IpcRequest::SessionEnd,
-                        socket,
-                        "session ended",
-                    )
-                    .await
-                }
+                SessionCommand::Start { socket } => session_cmd(
+                    conveyance_daemon::ipc::IpcRequest::SessionStart,
+                    socket,
+                    "session started",
+                )
+                .await
+                .map_err(CliError::from),
+                SessionCommand::End { socket } => session_cmd(
+                    conveyance_daemon::ipc::IpcRequest::SessionEnd,
+                    socket,
+                    "session ended",
+                )
+                .await
+                .map_err(CliError::from),
             },
             Command::McpShim { socket } => {
                 let sock = client_socket(socket)?;
-                conveyance_shim::run(&sock).await
+                conveyance_shim::run(&sock).await.map_err(CliError::from)
             }
+            Command::Unpair {
+                phone_id,
+                yes,
+                data_dir,
+            } => unpair(&phone_id, yes, data_dir),
+            Command::Log { cmd } => match cmd {
+                LogCommand::Query {
+                    since,
+                    tool,
+                    status,
+                    verbose,
+                    anomalous,
+                    data_dir,
+                } => logcmd::query(
+                    logcmd::QueryFilter {
+                        since,
+                        tool,
+                        status,
+                        verbose,
+                        anomalous,
+                    },
+                    resolve_executions_db(data_dir)?,
+                ),
+                LogCommand::Verify {
+                    repair,
+                    yes,
+                    data_dir,
+                } => logcmd::verify(repair, yes, resolve_executions_db(data_dir)?)
+                    .map_err(|e| CliError::with_code(e.code, e.message)),
+                LogCommand::Export {
+                    format,
+                    output,
+                    since,
+                    tool,
+                    status,
+                    data_dir,
+                } => {
+                    if format != "jsonl" {
+                        return Err(CliError::fail(format!(
+                            "unsupported format '{format}' (only jsonl is defined)"
+                        )));
+                    }
+                    logcmd::export(
+                        logcmd::QueryFilter {
+                            since,
+                            tool,
+                            status,
+                            verbose: false,
+                            anomalous: false,
+                        },
+                        output,
+                        resolve_executions_db(data_dir)?,
+                    )
+                }
+                LogCommand::Diff {
+                    phone_export,
+                    data_dir,
+                } => {
+                    let paths = resolve_pairings_and_executions(data_dir)?;
+                    logcmd::diff(
+                        &phone_export,
+                        logcmd::DiffPaths {
+                            pairings_db: paths.0,
+                            executions_db: paths.1,
+                        },
+                    )
+                }
+            },
         }
     }
 }
@@ -194,6 +377,69 @@ fn init_identity(data_dir_override: Option<std::path::PathBuf>) -> Result<(), St
     // load_or_create_identity prints generation progress itself.
     let _identity = load_or_create_identity(&path)?;
     Ok(())
+}
+
+/// Storage paths for local-DB commands: the override wins so tests and
+/// multi-instance setups never touch the platform directory.
+fn resolve_executions_db(
+    data_dir: Option<std::path::PathBuf>,
+) -> Result<std::path::PathBuf, CliError> {
+    Ok(match data_dir {
+        Some(d) => d.join("executions.db"),
+        None => conveyance_core::paths::data_dir()
+            .map_err(|e| CliError::fail(e.to_string()))?
+            .join("executions.db"),
+    })
+}
+
+fn resolve_pairings_and_executions(
+    data_dir: Option<std::path::PathBuf>,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), CliError> {
+    Ok(match data_dir {
+        Some(d) => (d.join("pairings.db"), d.join("executions.db")),
+        None => {
+            let base =
+                conveyance_core::paths::data_dir().map_err(|e| CliError::fail(e.to_string()))?;
+            (base.join("pairings.db"), base.join("executions.db"))
+        }
+    })
+}
+
+fn unpair(
+    phone_id: &str,
+    yes: bool,
+    data_dir_override: Option<std::path::PathBuf>,
+) -> Result<(), CliError> {
+    let dir = match data_dir_override {
+        Some(d) => d,
+        None => data_dir().map_err(CliError::from)?,
+    };
+    if !yes {
+        // Non-interactive use without --yes is refused rather than
+        // guessed: a revoked phone that keeps believing it is paired is
+        // exactly the state this command exists to create, deliberately.
+        eprintln!("Remove pairing {phone_id}? This cannot be undone. Pass --yes to confirm.");
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|e| CliError::fail(format!("cannot read confirmation: {e}")))?;
+        let answer = answer.trim().to_ascii_lowercase();
+        if answer != "y" && answer != "yes" {
+            return Err(CliError::fail("aborted"));
+        }
+    }
+
+    let store = conveyance_core::storage::pairings::PairingsDb::open(&dir.join("pairings.db"))
+        .map_err(|e| CliError::fail(e.to_string()))?;
+    match store.remove(phone_id) {
+        Ok(true) => {
+            println!("pairing {phone_id} removed");
+            println!("note: any active session should be ended (`conveyance session end`)");
+            Ok(())
+        }
+        Ok(false) => Err(CliError::fail(format!("no such pairing '{phone_id}'"))),
+        Err(e) => Err(CliError::fail(e.to_string())),
+    }
 }
 
 fn load_daemon_config(
@@ -358,10 +604,11 @@ async fn pair(_name: Option<String>) -> Result<(), String> {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    if let Err(msg) = cli.command.run().await {
-        // Exit codes: 1 = operation failed; the stub binaries' 2 for
-        // unimplemented remains reserved to them.
-        eprintln!("{msg}");
-        std::process::exit(1);
+    if let Err(e) = cli.command.run().await {
+        // Exit codes: 1 = operation failed. `log verify` returns the
+        // spec's 0/1/2 through CliError.code; everything else uses
+        // plain 0/1.
+        eprintln!("{}", e.message);
+        std::process::exit(e.code);
     }
 }

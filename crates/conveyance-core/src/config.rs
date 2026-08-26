@@ -174,19 +174,19 @@ impl Config {
             }
         }
 
-        if let Some(p) = &self.daemon.socket_path {
-            if p.trim().is_empty() {
-                return Err(ConfigError::Invalid(
-                    "daemon.socket_path must not be empty".into(),
-                ));
-            }
+        if let Some(p) = &self.daemon.socket_path
+            && p.trim().is_empty()
+        {
+            return Err(ConfigError::Invalid(
+                "daemon.socket_path must not be empty".into(),
+            ));
         }
-        if let Some(p) = &self.logging.executions_db {
-            if p.trim().is_empty() {
-                return Err(ConfigError::Invalid(
-                    "logging.executions_db must not be empty".into(),
-                ));
-            }
+        if let Some(p) = &self.logging.executions_db
+            && p.trim().is_empty()
+        {
+            return Err(ConfigError::Invalid(
+                "logging.executions_db must not be empty".into(),
+            ));
         }
         Ok(())
     }

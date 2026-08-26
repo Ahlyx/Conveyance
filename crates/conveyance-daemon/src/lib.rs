@@ -128,7 +128,8 @@ pub fn effective_socket(raw: &conveyance_core::config::Config) -> String {
 pub fn resolve_config(raw: &conveyance_core::config::Config) -> Result<DaemonConfig, StartupError> {
     // Full semantic validation BEFORE anything else: unknown fields,
     // malformed high-risk rules, then the timer bounds below.
-    raw.validated().map_err(|e| StartupError::Config(e.to_string()))?;
+    raw.validated()
+        .map_err(|e| StartupError::Config(e.to_string()))?;
     let data = conveyance_core::paths::data_dir()?;
     let session_params = SessionParams::validated(
         Duration::from_secs(raw.session.idle_timeout_seconds),

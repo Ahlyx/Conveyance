@@ -336,9 +336,11 @@ struct InFlight {
     /// approval can be bound and the matching ExecuteRequest built from
     /// exactly the bytes that were shown to the user.
     approval: Option<ApprovalRequest>,
-    /// Request coordinates kept for the whole flight so timeout rows
-    /// can carry them (`log query --tool` filters on these).
+    /// Request coordinates kept for the whole flight so timeout and
+    /// execute_result rows carry them (`log query --tool` filters on
+    /// these).
     service: Option<String>,
+    method: Option<String>,
     endpoint: Option<String>,
     deadline: Instant,
     reply: oneshot::Sender<Result<IpcResponse, OpError>>,
@@ -845,15 +847,20 @@ impl Owner {
             Stage::Approval => self.deps.approval_window,
             Stage::Services | Stage::Execute => self.deps.execute_window,
         };
-        let (service, endpoint) = match &approval {
-            Some(a) => (Some(a.service.clone()), Some(a.endpoint.clone())),
-            None => (None, None),
+        let (service, method, endpoint) = match &approval {
+            Some(a) => (
+                Some(a.service.clone()),
+                Some(a.method.clone()),
+                Some(a.endpoint.clone()),
+            ),
+            None => (None, None, None),
         };
         parts.in_flight = Some(InFlight {
             stage,
             req_id,
             approval,
             service,
+            method,
             endpoint,
             deadline: Instant::now() + window,
             reply,
@@ -1062,6 +1069,7 @@ impl Owner {
                     req_id: flight.req_id,
                     approval: None,
                     service: Some(approval.service.clone()),
+                    method: Some(approval.method.clone()),
                     endpoint: Some(approval.endpoint.clone()),
                     deadline: Instant::now() + self.deps.execute_window,
                     reply: flight.reply,
@@ -1097,6 +1105,10 @@ impl Owner {
                 Status::Error => "error",
                 Status::Denied => "denied",
             },
+            // Request coordinates ride along for `log query --tool`.
+            "service": flight.service,
+            "method": flight.method,
+            "endpoint": flight.endpoint,
             "body": rsp.body,
         });
         if let Some(code) = rsp.http_status {

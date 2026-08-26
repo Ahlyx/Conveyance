@@ -137,7 +137,10 @@ mod tests {
 
         let mut conn = super::super::open_connection(&path).unwrap();
         run_migrations(&mut conn, DbKind::Executions).unwrap();
-        assert_eq!(user_version(&conn).unwrap(), migrations(DbKind::Executions).len() as i64);
+        assert_eq!(
+            user_version(&conn).unwrap(),
+            migrations(DbKind::Executions).len() as i64
+        );
 
         // Objects exist exactly once.
         let tables: i64 = conn
@@ -159,7 +162,10 @@ mod tests {
 
         // Re-running must change nothing and error nowhere.
         run_migrations(&mut conn, DbKind::Executions).unwrap();
-        assert_eq!(user_version(&conn).unwrap(), migrations(DbKind::Executions).len() as i64);
+        assert_eq!(
+            user_version(&conn).unwrap(),
+            migrations(DbKind::Executions).len() as i64
+        );
     }
 
     #[test]

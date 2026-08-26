@@ -149,24 +149,22 @@ impl LogDb {
     ///   appended to since. Repairable by recomputation.
     pub fn verify_with_meta(&self) -> Result<VerifyVerdict, StorageError> {
         let rows = self.read_rows()?;
-        match hashchain::verify_chain(&rows) {
-            Err(issue) => return Ok(VerifyVerdict::ChainBroken(issue)),
-            Ok(count) => {
-                let computed = rows
-                    .last()
-                    .map(|r| hex_encode_lower(&r.hash))
-                    .unwrap_or_else(|| hex_encode_lower(&hashchain::GENESIS_PREV_HASH));
-                let recorded = self.read_meta("head_hash")?;
-                match recorded {
-                    None => Ok(VerifyVerdict::Intact(count)),
-                    Some(rec) if rec == computed => Ok(VerifyVerdict::Intact(count)),
-                    Some(rec) => Ok(VerifyVerdict::MetaStale {
-                        recorded_head: rec,
-                        computed_head: computed,
-                        rows: count,
-                    }),
-                }
-            }
+        if let Err(issue) = hashchain::verify_chain(&rows) {
+            return Ok(VerifyVerdict::ChainBroken(issue));
+        }
+        let count = rows.len();
+        let computed = rows
+            .last()
+            .map(|r| hex_encode_lower(&r.hash))
+            .unwrap_or_else(|| hex_encode_lower(&hashchain::GENESIS_PREV_HASH));
+        match self.read_meta("head_hash")? {
+            None => Ok(VerifyVerdict::Intact(count)),
+            Some(rec) if rec == computed => Ok(VerifyVerdict::Intact(count)),
+            Some(rec) => Ok(VerifyVerdict::MetaStale {
+                recorded_head: rec,
+                computed_head: computed,
+                rows: count,
+            }),
         }
     }
 
@@ -279,6 +277,12 @@ impl LogDb {
                 source,
             })?;
         Ok(())
+    }
+
+    /// Public read of full rows (events + chaining columns) for export
+    /// tooling. Read-only by contract; nothing here writes.
+    pub fn rows(&self) -> Result<Vec<ChainRow>, StorageError> {
+        self.read_rows()
     }
 
     fn read_rows(&self) -> Result<Vec<ChainRow>, StorageError> {
@@ -601,7 +605,11 @@ mod tests {
 
         let db = LogDb::open(&path).unwrap();
         match db.verify_with_meta().unwrap() {
-            VerifyVerdict::MetaStale { recorded_head, computed_head, .. } => {
+            VerifyVerdict::MetaStale {
+                recorded_head,
+                computed_head,
+                ..
+            } => {
                 assert_eq!(recorded_head, "deadbeef");
                 assert_ne!(computed_head, "deadbeef");
             }
