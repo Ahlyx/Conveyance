@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 conveyance-core = { path = "../conveyance-core" }
+conveyance-daemon = { path = "../conveyance-daemon" }
 clap.workspace = true
 tokio.workspace = true
 

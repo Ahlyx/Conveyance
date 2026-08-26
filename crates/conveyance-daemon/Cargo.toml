@@ -24,6 +24,5 @@ interprocess.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-
 [features]
 ble = ["conveyance-core/ble"]

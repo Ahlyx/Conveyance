@@ -10,7 +10,7 @@
 //! Client helpers here are used by the CLI (`status`, `session start`,
 //! `session end`) so both sides share one codec and one framing.
 
-use interprocess::local_socket::{GenericNamespaced, tokio::Stream};
+use interprocess::local_socket::tokio::Stream;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -36,13 +36,10 @@ pub enum IpcError {
 
 impl From<std::io::Error> for IpcError {
     fn from(e: std::io::Error) -> Self {
-        if e.kind() == std::io::ErrorKind::NotFound || e.raw_os_error() == Some(2) {
-            // Unix: ENOENT on connect; Windows maps differently but
-            // NotFound is the common case for "daemon not running".
-            return IpcError::NotRunning {
-                path: String::new(),
-            };
-        }
+        // Deliberately no NotFound => NotRunning mapping here: only the
+        // CONNECT site knows which endpoint failed (and can name it in
+        // the error). Mid-connection ENOENT means something else
+        // entirely and must not masquerade as "daemon not running".
         IpcError::Io(e.to_string())
     }
 }
@@ -148,16 +145,52 @@ where
 
 // ---- client --------------------------------------------------------------
 
-/// Connect to the daemon at `socket_path` and perform one
-/// request/response exchange. Used by CLI subcommands; the daemon-side
-/// listener lives in the server loop instead.
-pub async fn single_request(socket_path: &str, req: IpcRequest) -> Result<IpcResponse, IpcError> {
+/// Platform interpretation of a configured socket identity, shared by
+/// the daemon listener and every client so both sides always land on
+/// the same endpoint.
+///
+/// * A Unix absolute path is a filesystem socket path (the spec's
+///   `socket_path` knob).
+/// * Anything else is a NAMESPACED name: abstract namespace on Linux,
+///   `/tmp/<name>` on other Unices, `\\.\pipe\<name>` on Windows.
+///   Namespaced names are what tests use -- unique per test, no
+///   filesystem cleanup, identical semantics across platforms.
+pub fn local_name(socket: &str) -> Result<interprocess::local_socket::Name<'_>, IpcError> {
+    #[cfg(unix)]
+    use interprocess::local_socket::{GenericFilePath, ToFsName};
+    use interprocess::local_socket::{GenericNamespaced, ToNsName};
+
+    #[cfg(unix)]
+    {
+        if socket.starts_with('/') {
+            return socket
+                .to_fs_name::<GenericFilePath>()
+                .map_err(|e| IpcError::Io(format!("invalid socket path {socket}: {e}")));
+        }
+    }
+    socket
+        .to_ns_name::<GenericNamespaced>()
+        .map_err(|e| IpcError::Io(format!("invalid socket name {socket}: {e}")))
+}
+
+/// Connect to the daemon at `socket` and perform one request/response
+/// exchange. Used by CLI subcommands; the daemon-side listener lives in
+/// the server loop instead.
+pub async fn single_request(socket: &str, req: IpcRequest) -> Result<IpcResponse, IpcError> {
     use interprocess::local_socket::tokio::prelude::*;
-    let name = name_for(socket_path)?;
+
+    let name = local_name(socket)?;
     let mut stream = Stream::connect(name).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             IpcError::NotRunning {
-                path: socket_path.to_string(),
+                path: socket.to_string(),
+            }
+        } else if e.kind() == std::io::ErrorKind::TimedOut {
+            // Windows pipe connect can surface as timeout when the name
+            // simply does not exist; from the caller's seat that reads
+            // identically to "no daemon".
+            IpcError::NotRunning {
+                path: socket.to_string(),
             }
         } else {
             IpcError::Io(e.to_string())
@@ -165,14 +198,4 @@ pub async fn single_request(socket_path: &str, req: IpcRequest) -> Result<IpcRes
     })?;
     write_message(&mut stream, &req).await?;
     read_response(&mut stream).await
-}
-
-/// Build the platform-appropriate local-socket name from a configured
-/// path. Unix wants a filesystem path; Windows wants the pipe name
-/// (the `\\.\pipe\` prefix is part of the name).
-pub fn name_for(socket_path: &str) -> Result<interprocess::local_socket::Name<'_>, IpcError> {
-    use interprocess::local_socket::ToNsName;
-    socket_path
-        .to_ns_name::<GenericNamespaced>()
-        .map_err(|_| IpcError::Io(format!("invalid socket name {socket_path}")))
 }

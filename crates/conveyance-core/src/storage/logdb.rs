@@ -107,6 +107,60 @@ impl LogDb {
             })
     }
 
+    /// Event content of every row, storage order. Query surface for
+    /// the daemon's recovery sweep (7.1) and later CLI log tooling --
+    /// deliberately returns EVENT data only, never chaining columns:
+    /// consumers reason about what happened, hashes stay verify()'s job.
+    pub fn events(&self) -> Result<Vec<LogEvent>, StorageError> {
+        let conn = recover_mutex(self.conn.lock());
+        let mut stmt = conn
+            .prepare("SELECT req_id, event_type, payload_json, timestamp FROM entries ORDER BY id")
+            .map_err(|source| StorageError::Db {
+                path: self.path.clone(),
+                source,
+            })?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(LogEvent {
+                    req_id: row.get(0)?,
+                    event_type: row.get(1)?,
+                    payload_json: row.get(2)?,
+                    timestamp: row.get(3)?,
+                })
+            })
+            .map_err(|source| StorageError::Db {
+                path: self.path.clone(),
+                source,
+            })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|source| StorageError::Db {
+                path: self.path.clone(),
+                source,
+            })?);
+        }
+        Ok(out)
+    }
+
+    /// Fold the write-ahead log back into the main database file and
+    /// truncate it. Clean-shutdown step (spec: DBs are checkpointed on
+    /// exit): a restart then opens a self-contained file with an empty
+    /// -wal sidecar instead of recovering from one.
+    pub fn checkpoint(&self) -> Result<(), StorageError> {
+        let conn = recover_mutex(self.conn.lock());
+        // TRUNCATE (not PASSIVE): the point is an empty -wal afterwards,
+        // and the daemon holds the only connection at this moment.
+        let _: (i64, i64, i64) = conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(|source| StorageError::Db {
+                path: self.path.clone(),
+                source,
+            })?;
+        Ok(())
+    }
+
     fn read_rows(&self) -> Result<Vec<ChainRow>, StorageError> {
         let conn = recover_mutex(self.conn.lock());
         let mut stmt = conn

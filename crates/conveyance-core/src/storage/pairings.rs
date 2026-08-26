@@ -161,6 +161,21 @@ impl PairingsDb {
         Ok(changed > 0)
     }
 
+    /// Fold the write-ahead log back into the main database file. See
+    /// `LogDb::checkpoint` for why this exists (clean-shutdown step).
+    pub fn checkpoint(&self) -> Result<(), StorageError> {
+        let conn = recover_mutex(self.conn.lock());
+        let _: (i64, i64, i64) = conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(|source| StorageError::Db {
+                path: self.path.clone(),
+                source,
+            })?;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn count(&self) -> Result<i64, StorageError> {
         let conn = recover_mutex(self.conn.lock());
