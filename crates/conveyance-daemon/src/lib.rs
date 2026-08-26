@@ -12,6 +12,7 @@
 
 pub mod ipc;
 pub mod phone;
+pub mod recovery;
 pub mod server;
 pub mod session;
 
@@ -226,17 +227,38 @@ impl DaemonState {
                 Ok(()) => IpcResponse::SessionStarted,
                 Err(err) => op_error_response(&err),
             },
-            IpcRequest::AuthenticatedRequest { .. } | IpcRequest::ListServices => {
+            IpcRequest::AuthenticatedRequest {
+                service,
+                method,
+                endpoint,
+                params,
+                requested_by,
+            } => {
                 // Cold-start gate fires BEFORE anything else: while
                 // NO_SESSION there is no channel to a phone at all.
                 if !self.sessions.is_active() {
                     return no_session_error();
                 }
-                op_error_response(&OpError::new(
-                    "conveyance/internal",
-                    "authenticated routing arrives in phase 7.1",
-                    false,
-                ))
+                let op = session::RoutedOp::AuthenticatedRequest {
+                    service,
+                    method,
+                    endpoint,
+                    params,
+                    requested_by,
+                };
+                match self.sessions.route(op).await {
+                    Ok(resp) => resp,
+                    Err(err) => op_error_response(&err),
+                }
+            }
+            IpcRequest::ListServices => {
+                if !self.sessions.is_active() {
+                    return no_session_error();
+                }
+                match self.sessions.route(session::RoutedOp::ListServices).await {
+                    Ok(resp) => resp,
+                    Err(err) => op_error_response(&err),
+                }
             }
         }
     }
@@ -316,6 +338,21 @@ pub fn refuse_to_start_with<P: KeyProvider>(
 /// Everything `run` needs that varies between production and tests.
 pub struct DaemonDeps {
     pub dialer: Box<dyn phone::PhoneDialer>,
+    /// Window overrides (tests only): production leaves both None to
+    /// get the spec's 60 s.
+    pub approval_window: Option<Duration>,
+    pub execute_window: Option<Duration>,
+}
+
+impl DaemonDeps {
+    /// Production-shaped deps: spec windows, injected dialer.
+    pub fn new(dialer: Box<dyn phone::PhoneDialer>) -> Self {
+        Self {
+            dialer,
+            approval_window: None,
+            execute_window: None,
+        }
+    }
 }
 
 /// Build the full daemon state (owner task included) from resolved
@@ -333,6 +370,8 @@ pub fn assemble_state(
         log: stores.log.clone(),
         local_static,
         params: config.session_params,
+        approval_window: deps.approval_window.unwrap_or(session::APPROVAL_WINDOW),
+        execute_window: deps.execute_window.unwrap_or(session::EXECUTE_WINDOW),
     });
 
     Arc::new(DaemonState {
@@ -343,17 +382,12 @@ pub fn assemble_state(
     })
 }
 
-/// Full daemon lifecycle: refuse-to-start, serve until SIGTERM/SIGINT/
-/// Ctrl-C, then drain within bounds. Returns when it is safe to exit 0;
-/// errors mean exit nonzero with `.to_string()` on stderr.
+/// Full daemon lifecycle: refuse-to-start, crash-recovery sweep, serve
+/// until SIGTERM/SIGINT/Ctrl-C, then drain within bounds. Returns when
+/// it is safe to exit 0; errors mean exit nonzero with `.to_string()`
+/// on stderr.
 pub async fn run(config: DaemonConfig) -> Result<(), StartupError> {
-    run_with(
-        config,
-        DaemonDeps {
-            dialer: production_dialer(),
-        },
-    )
-    .await
+    run_with(config, DaemonDeps::new(production_dialer())).await
 }
 
 /// The transport a production build dials with. BLE-only today; the
@@ -377,6 +411,18 @@ fn production_dialer() -> Box<dyn phone::PhoneDialer> {
 /// Like [`run`] with injected dependencies (tests).
 pub async fn run_with(config: DaemonConfig, deps: DaemonDeps) -> Result<(), StartupError> {
     let stores = refuse_to_start(&config)?;
+
+    // Crash-recovery sweep runs BEFORE the socket binds: by the time
+    // any shim can talk to us, every orphaned req_id from a previous
+    // life already has its request_timeout row.
+    let swept = recovery::sweep_orphaned_requests(&stores.log).map_err(|e| StartupError::Open {
+        what: "executions database (recovery sweep)".to_string(),
+        message: e.to_string(),
+    })?;
+    if swept > 0 {
+        eprintln!("conveyance daemon: marked {swept} orphaned request(s) as request_timeout");
+    }
+
     let state = assemble_state(&config, stores, deps);
     server::serve_until_signal(config, state).await
 }
@@ -398,6 +444,9 @@ pub(crate) mod test_support {
     use conveyance_core::session::{Role, SessionHandshake};
     use conveyance_core::transport::mock::{MockLink, MockTransport};
     use conveyance_core::transport::{Link, Transport};
+    use conveyance_core::wire::message::{
+        ApprovalResponse, Decision, ExecuteResponse, ListServicesResponse, Status,
+    };
     use std::collections::HashMap;
     use std::future::Future;
     use std::sync::Mutex as StdMutex;
@@ -476,16 +525,34 @@ pub(crate) mod test_support {
 
     use conveyance_core::crypto::OsEntropy;
 
+    /// How the mock phone answers each ApprovalRequest, consumed in
+    /// order; a missing entry defaults to Approve.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub(crate) enum PhoneAction {
+        /// Sign + approve normally.
+        Approve,
+        /// Sign + deny with reason "user_tap".
+        Deny,
+        /// Sign + decision "expired" (phone-side window lapsed).
+        Expire,
+        /// Stay silent -- drives the daemon's live timeout path.
+        NoReply,
+        /// Approve but corrupt the signature byte -- drives the
+        /// verification-rejection path.
+        BadSignature,
+    }
+
     /// One fully assembled daemon against a live mock phone.
     pub(crate) struct TestDaemon {
         pub config: DaemonConfig,
         pub state: Arc<DaemonState>,
         pub shutdown: watch::Sender<bool>,
         pub keys: Arc<MockKeyProvider>,
-        /// The phone's Ed25519 signing key -- 7.1 tests sign approval
-        /// responses with it.
-        #[allow(dead_code)]
-        pub phone_signer: IdentitySecretKey,
+        /// Scripted answers, one per ApprovalRequest in arrival order.
+        pub phone_ctl: mpsc::Sender<PhoneAction>,
+        /// What the phone saw/sent, in order -- the "both sides" half
+        /// of the log-row exit criterion.
+        pub phone_log: Arc<StdMutex<Vec<String>>>,
         pub _dir: tempfile::TempDir,
     }
 
@@ -545,9 +612,44 @@ pub(crate) mod test_support {
         }
     }
 
-    /// Spawn a daemon + mock phone with a completed pairing row.
-    /// `paired=false` skips the pairing row (unpaired-daemon cases).
-    pub(crate) async fn spawn_daemon(tag: &str, paired: bool) -> TestDaemon {
+    /// Spawn a daemon + mock phone with a completed pairing row and
+    /// short routing windows (tests must not wait spec minutes).
+    pub(crate) async fn spawn_daemon(tag: &str) -> TestDaemon {
+        spawn_daemon_opts(tag, Opts::default()).await
+    }
+
+    /// Unpaired variant for cold-start / refusal cases.
+    pub(crate) async fn spawn_daemon_unpaired(tag: &str) -> TestDaemon {
+        spawn_daemon_opts(
+            tag,
+            Opts {
+                paired: false,
+                ..Opts::default()
+            },
+        )
+        .await
+    }
+
+    #[derive(Clone, Copy)]
+    pub(crate) struct Opts {
+        pub paired: bool,
+        /// Approval/execute response windows. Short by default: tests
+        /// exercise timeout paths without waiting real minutes.
+        pub approval_window: Duration,
+        pub execute_window: Duration,
+    }
+
+    impl Default for Opts {
+        fn default() -> Self {
+            Self {
+                paired: true,
+                approval_window: Duration::from_millis(300),
+                execute_window: Duration::from_millis(300),
+            }
+        }
+    }
+
+    pub(crate) async fn spawn_daemon_opts(tag: &str, opts: Opts) -> TestDaemon {
         let dir = tempfile::tempdir().unwrap();
         let keys = Arc::new(MockKeyProvider::new());
 
@@ -572,7 +674,7 @@ pub(crate) mod test_support {
 
         let stores = refuse_to_start_with(&config, keys.as_ref()).unwrap();
 
-        if paired {
+        if opts.paired {
             stores
                 .store
                 .record(
@@ -586,10 +688,14 @@ pub(crate) mod test_support {
         let (phone_tx, phone_rx) = mpsc::channel::<MockLink>(4);
         let deps = DaemonDeps {
             dialer: Box::new(HarnessDialer { phone_tx }),
+            approval_window: Some(opts.approval_window),
+            execute_window: Some(opts.execute_window),
         };
         let state = assemble_state(&config, stores, deps);
 
         let params = config.session_params;
+        let phone_log = Arc::new(StdMutex::new(Vec::new()));
+        let (ctl_tx, ctl_rx) = mpsc::channel::<PhoneAction>(16);
         tokio::spawn(mock_phone_task(
             phone_rx,
             Secret::from_bytes(phone_dh.to_bytes()),
@@ -597,6 +703,9 @@ pub(crate) mod test_support {
                 .public_key()
                 .to_bytes(),
             params,
+            phone_signer.clone(),
+            ctl_rx,
+            phone_log.clone(),
         ));
 
         let shutdown = server::start_ipc_server(&config, state.clone())
@@ -608,21 +717,31 @@ pub(crate) mod test_support {
             state,
             shutdown,
             keys,
-            phone_signer,
+            phone_ctl: ctl_tx,
+            phone_log,
             _dir: dir,
         }
     }
 
     /// The phone side of the world: for every delivered link, run the
-    /// KK handshake as INITIATOR (its permanent role), then hold the
-    /// session open answering pings until the daemon drops the
-    /// transport -- mirroring kill-switch/disconnect teardown.
+    /// KK handshake as INITIATOR (its permanent role), then serve the
+    /// protocol -- pings, scripted approval decisions, execute
+    /// responses, list_services -- until the daemon drops the
+    /// transport.
+    #[allow(clippy::too_many_lines)]
     async fn mock_phone_task(
         mut rx: mpsc::Receiver<MockLink>,
         phone_static: Secret<32>,
         pc_dh_pub: [u8; 32],
         params: SessionParams,
+        signer: IdentitySecretKey,
+        mut actions: mpsc::Receiver<PhoneAction>,
+        transcript: Arc<StdMutex<Vec<String>>>,
     ) {
+        fn note(t: &StdMutex<Vec<String>>, s: &str) {
+            t.lock().unwrap().push(s.to_string());
+        }
+
         while let Some(mut link) = rx.recv().await {
             let peer = conveyance_core::session::PeerIdentity {
                 local_static: phone_static.clone(),
@@ -658,25 +777,109 @@ pub(crate) mod test_support {
                 Err(_) => continue,
             };
 
-            // Hold the session; answer pings like a real phone would.
+            // Serve the session like a real phone would.
             loop {
-                let Some(msg) = io.recv_app().await else {
+                let Some(cipher) = io.recv_app().await else {
+                    break;
+                };
+                // Decrypt through the session BEFORE decoding: frames
+                // carry Noise ciphertext, not plaintext.
+                let Ok(msg) = session.receive(&cipher) else {
                     break;
                 };
                 let decoded: Option<conveyance_core::wire::message::WireMessage> =
                     ciborium::de::from_reader(&mut &msg[..]).ok();
-                if let Some(conveyance_core::wire::message::WireMessage::Ping(p)) = decoded {
-                    let pong = conveyance_core::wire::message::WireMessage::Pong(
-                        conveyance_core::wire::message::Pong {
-                            req_id: p.req_id,
-                            timestamp: p.timestamp,
-                        },
-                    );
-                    if let Ok(plain) = conveyance_core::wire::message::encode(&pong)
-                        && io.send_encrypted(&mut session, &plain).await.is_err()
-                    {
-                        break;
+                match decoded {
+                    Some(conveyance_core::wire::message::WireMessage::Ping(p)) => {
+                        let pong = conveyance_core::wire::message::WireMessage::Pong(
+                            conveyance_core::wire::message::Pong {
+                                req_id: p.req_id,
+                                timestamp: p.timestamp,
+                            },
+                        );
+                        if let Ok(plain) = conveyance_core::wire::message::encode(&pong)
+                            && io.send_encrypted(&mut session, &plain).await.is_err()
+                        {
+                            break;
+                        }
                     }
+                    Some(conveyance_core::wire::message::WireMessage::ApprovalRequest(req)) => {
+                        note(&transcript, "recv ApprovalRequest");
+                        // Next scripted action; default approve.
+                        let action = actions.try_recv().unwrap_or(PhoneAction::Approve);
+                        let decision = match action {
+                            PhoneAction::Approve => Decision::Approved,
+                            PhoneAction::Deny => Decision::Denied,
+                            PhoneAction::Expire => Decision::Expired,
+                            PhoneAction::NoReply => {
+                                note(&transcript, "action NoReply (silence)");
+                                continue;
+                            }
+                            PhoneAction::BadSignature => Decision::Approved,
+                        };
+                        let reason = match action {
+                            PhoneAction::Deny => Some("user_tap".to_string()),
+                            PhoneAction::Expire => Some("phone_window".to_string()),
+                            _ => None,
+                        };
+                        let mut rsp = ApprovalResponse::approved_or_denied(
+                            req.req_id, decision, reason, &signer,
+                        );
+                        if action == PhoneAction::BadSignature {
+                            rsp.signature[0] ^= 0xff;
+                        }
+                        note(&transcript, &format!("sent ApprovalResponse {decision:?}"));
+                        if let Ok(plain) = conveyance_core::wire::message::encode(
+                            &conveyance_core::wire::message::WireMessage::ApprovalResponse(rsp),
+                        ) && io.send_encrypted(&mut session, &plain).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Some(conveyance_core::wire::message::WireMessage::ExecuteRequest(req)) => {
+                        note(&transcript, "recv ExecuteRequest");
+                        let body = serde_json::json!({
+                            "echo": {
+                                "service": req.service,
+                                "method": req.method,
+                                "endpoint": req.endpoint,
+                                "params": req.params,
+                            },
+                            "phone": "mock",
+                        });
+                        let rsp = ExecuteResponse::new(
+                            req.req_id,
+                            Status::Ok,
+                            Some(200),
+                            body,
+                            crate::session::unix_now(),
+                        )
+                        .expect("mock body is canonical")
+                        .sign(&signer);
+                        note(&transcript, "sent ExecuteResponse ok");
+                        if let Ok(plain) = conveyance_core::wire::message::encode(
+                            &conveyance_core::wire::message::WireMessage::ExecuteResponse(rsp),
+                        ) && io.send_encrypted(&mut session, &plain).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Some(conveyance_core::wire::message::WireMessage::ListServicesRequest(req)) => {
+                        note(&transcript, "recv ListServicesRequest");
+                        let rsp = conveyance_core::wire::message::WireMessage::ListServicesResponse(
+                            ListServicesResponse {
+                                req_id: req.req_id,
+                                services: vec!["github".into(), "aws".into()],
+                            },
+                        );
+                        note(&transcript, "sent ListServicesResponse");
+                        if let Ok(plain) = conveyance_core::wire::message::encode(&rsp)
+                            && io.send_encrypted(&mut session, &plain).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -740,11 +943,10 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
     use crate::ipc::{IpcRequest, IpcResponse, single_request};
-    use crate::test_support::{MockKeyProvider, spawn_daemon};
+    use crate::test_support::{MockKeyProvider, spawn_daemon, spawn_daemon_unpaired};
     use conveyance_core::crypto::OsEntropy;
     use conveyance_core::storage::identity::StoredIdentity;
     use serde_json::json;
-    use std::time::Duration;
 
     async fn status_roundtrip(socket: &str) -> IpcResponse {
         single_request(socket, IpcRequest::Status)
@@ -757,7 +959,7 @@ mod tests {
     /// correct structured response.
     #[tokio::test]
     async fn ipc_roundtrip_status_over_real_socket() {
-        let d = spawn_daemon("roundtrip", true).await;
+        let d = spawn_daemon("roundtrip").await;
 
         match status_roundtrip(&d.config.socket).await {
             IpcResponse::Status {
@@ -783,7 +985,7 @@ mod tests {
     /// have their own contracts and are covered elsewhere.
     #[tokio::test]
     async fn cold_start_rejects_session_requiring_requests() {
-        let d = spawn_daemon("coldstart", false).await;
+        let d = spawn_daemon_unpaired("coldstart").await;
 
         let requests = vec![
             IpcRequest::CheckSession,
@@ -815,7 +1017,7 @@ mod tests {
     /// transitions.
     #[tokio::test]
     async fn session_lifecycle_against_mock_phone_reaches_active_then_no_session() {
-        let d = spawn_daemon("lifecycle", true).await;
+        let d = spawn_daemon("lifecycle").await;
         let handle = &d.state.sessions;
 
         // Start: dial + full KK handshake against the harness phone.
@@ -875,7 +1077,7 @@ mod tests {
     /// right version, and never contradict the lifecycle order.
     #[tokio::test]
     async fn concurrent_clients_observe_consistent_state() {
-        let d = spawn_daemon("concurrent", true).await;
+        let d = spawn_daemon("concurrent").await;
         let socket = d.config.socket.clone();
         let handle = d.state.sessions.clone();
 
@@ -936,7 +1138,7 @@ mod tests {
     /// same name binds again and serves correctly.
     #[tokio::test]
     async fn shutdown_is_clean_and_restartable() {
-        let d = spawn_daemon("restart", false).await;
+        let d = spawn_daemon_unpaired("restart").await;
         let socket = d.config.socket.clone();
 
         let _ = status_roundtrip(&socket).await;
@@ -965,9 +1167,7 @@ mod tests {
             assemble_state(
                 &d.config,
                 stores,
-                DaemonDeps {
-                    dialer: Box::new(test_support::NoDialer),
-                },
+                DaemonDeps::new(Box::new(test_support::NoDialer)),
             )
         };
         let shutdown2 = server::start_ipc_server(&d.config, state2)
@@ -988,14 +1188,12 @@ mod tests {
     /// results (which lie on Windows named pipes).
     #[tokio::test]
     async fn second_daemon_on_same_socket_is_refused() {
-        let d = spawn_daemon("inuse", false).await;
+        let d = spawn_daemon_unpaired("inuse").await;
         let stores = refuse_to_start_with(&d.config, d.keys.as_ref()).unwrap();
         let state = assemble_state(
             &d.config,
             stores,
-            DaemonDeps {
-                dialer: Box::new(test_support::NoDialer),
-            },
+            DaemonDeps::new(Box::new(test_support::NoDialer)),
         );
         match server::start_ipc_server(&d.config, state).await {
             Err(StartupError::SocketInUse { .. }) => {}
@@ -1071,5 +1269,362 @@ mod tests {
             Err(other) => panic!("expected Open failure, got {other:?}"),
             Ok(_) => panic!("daemon started despite unopenable database"),
         }
+    }
+}
+
+// ---- phase 7.1 tests ----------------------------------------------------------
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+    use crate::ipc::{IpcRequest, IpcResponse, single_request};
+    use crate::recovery::{CRASHED_BEFORE_TERMINAL, sweep_orphaned_requests};
+    use crate::test_support::{PhoneAction, TestDaemon, spawn_daemon};
+    use conveyance_core::crypto::OsEntropy;
+    use conveyance_core::crypto::hashchain::LogEvent;
+    use conveyance_core::storage::identity::StoredIdentity;
+    use serde_json::json;
+
+    fn auth_req() -> IpcRequest {
+        IpcRequest::AuthenticatedRequest {
+            service: "github".into(),
+            method: "POST".into(),
+            endpoint: "/v1/deploy".into(),
+            params: json!({"env": "prod", "replicas": 3}),
+            requested_by: Some("test-shim".into()),
+        }
+    }
+
+    async fn start_session(d: &TestDaemon) {
+        d.state.sessions.start().await.unwrap();
+        d.state.sessions.wait_active(true).await;
+    }
+
+    /// Exit criterion (7.1): full flow against the mock phone -- log
+    /// rows on BOTH sides and the body propagating back to the shim.
+    #[tokio::test]
+    async fn full_authenticated_request_flow() {
+        let d = spawn_daemon("route-happy").await;
+        start_session(&d).await;
+
+        let resp = single_request(&d.config.socket, auth_req()).await.unwrap();
+        match resp {
+            IpcResponse::Body(body) => {
+                assert_eq!(body["phone"], json!("mock"));
+                assert_eq!(body["echo"]["service"], json!("github"));
+                assert_eq!(body["echo"]["params"]["env"], json!("prod"));
+            }
+            other => panic!("expected Body response, got {other:?}"),
+        }
+
+        // PC-side rows for this req_id, in order.
+        let log = LogDb::open(&d.config.executions_db).unwrap();
+        let events = log.events().unwrap();
+        let lifecycle_skipped = |e: &LogEvent| e.req_id != [0u8; 16];
+        let trail: Vec<&str> = events
+            .iter()
+            .filter(|e| lifecycle_skipped(e))
+            .map(|e| e.event_type.as_str())
+            .collect();
+        assert_eq!(
+            trail,
+            vec![
+                "approval_request",
+                "approval_granted",
+                "execute_sent",
+                "execute_result"
+            ],
+            "PC log trail mismatch: {trail:?}"
+        );
+        assert_eq!(log.verify().unwrap(), Ok(events.len()), "chain intact");
+
+        // Phone side saw exactly the two protocol requests.
+        let phone = d.phone_log.lock().unwrap().clone();
+        assert_eq!(
+            phone,
+            vec![
+                "recv ApprovalRequest",
+                "sent ApprovalResponse Approved",
+                "recv ExecuteRequest",
+                "sent ExecuteResponse ok",
+            ],
+            "phone transcript mismatch: {phone:?}"
+        );
+    }
+
+    /// Exit criterion (7.1): denial produces the right spec error, no
+    /// execution happens, rows are recorded.
+    #[tokio::test]
+    async fn denied_approval_produces_spec_error_without_execution() {
+        let d = spawn_daemon("route-deny").await;
+        d.phone_ctl.send(PhoneAction::Deny).await.unwrap();
+        start_session(&d).await;
+
+        match single_request(&d.config.socket, auth_req()).await.unwrap() {
+            IpcResponse::Error {
+                code,
+                retryable,
+                message,
+            } => {
+                assert_eq!(code, "conveyance/approval_denied");
+                assert!(!retryable, "denial is final per the spec table");
+                assert!(message.contains("denied"));
+            }
+            other => panic!("expected structured error, got {other:?}"),
+        }
+
+        let log = LogDb::open(&d.config.executions_db).unwrap();
+        let trail: Vec<String> = log
+            .events()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.req_id != [0u8; 16])
+            .map(|e| e.event_type)
+            .collect();
+        assert_eq!(trail, vec!["approval_request", "approval_denied"]);
+
+        // The phone never received an ExecuteRequest.
+        let phone = d.phone_log.lock().unwrap().clone();
+        assert!(!phone.iter().any(|s| s.contains("Execute")), "{phone:?}");
+    }
+
+    /// Phone-side expiry maps onto the approval_timeout code (the
+    /// shim-facing table has no separate code; both mean ask again).
+    #[tokio::test]
+    async fn expired_decision_maps_to_approval_timeout() {
+        let d = spawn_daemon("route-expired").await;
+        d.phone_ctl.send(PhoneAction::Expire).await.unwrap();
+        start_session(&d).await;
+
+        match single_request(&d.config.socket, auth_req()).await.unwrap() {
+            IpcResponse::Error {
+                code, retryable, ..
+            } => {
+                assert_eq!(code, "conveyance/approval_timeout");
+                assert!(retryable);
+            }
+            other => panic!("expected timeout error, got {other:?}"),
+        }
+    }
+
+    /// Silence from the phone hits the daemon's deadline: the client
+    /// sees conveyance/approval_timeout AND the log records a LIVE
+    /// timeout (reason "timeout") -- distinct from crash recovery.
+    #[tokio::test]
+    async fn silent_phone_times_out_with_live_timeout_row() {
+        let d = spawn_daemon("route-silent").await;
+        d.phone_ctl.send(PhoneAction::NoReply).await.unwrap();
+        start_session(&d).await;
+
+        match single_request(&d.config.socket, auth_req()).await.unwrap() {
+            IpcResponse::Error {
+                code, retryable, ..
+            } => {
+                assert_eq!(code, "conveyance/approval_timeout");
+                assert!(retryable);
+            }
+            other => panic!("expected timeout error, got {other:?}"),
+        }
+
+        let timeouts: Vec<LogEvent> = LogDb::open(&d.config.executions_db)
+            .unwrap()
+            .events()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.event_type == "request_timeout")
+            .collect();
+        assert_eq!(timeouts.len(), 1);
+        let payload: serde_json::Value = serde_json::from_str(&timeouts[0].payload_json).unwrap();
+        assert_eq!(payload["reason"], json!("timeout"), "live timeout reason");
+    }
+
+    /// A corrupted phone signature must be refused BEFORE any
+    /// execution, loudly logged, and the session kept alive.
+    #[tokio::test]
+    async fn bad_signature_rejected_before_execution() {
+        let d = spawn_daemon("route-badsig").await;
+        d.phone_ctl.send(PhoneAction::BadSignature).await.unwrap();
+        start_session(&d).await;
+
+        match single_request(&d.config.socket, auth_req()).await.unwrap() {
+            IpcResponse::Error {
+                code, retryable, ..
+            } => {
+                assert_eq!(code, "conveyance/internal");
+                assert!(!retryable);
+            }
+            other => panic!("expected rejection, got {other:?}"),
+        }
+
+        let events = LogDb::open(&d.config.executions_db)
+            .unwrap()
+            .events()
+            .unwrap();
+        assert!(
+            !events.iter().any(|e| e.event_type == "execute_sent"),
+            "nothing may execute on a bad signature"
+        );
+        assert!(
+            events.iter().any(|e| e.event_type == "daemon_note"
+                && e.payload_json.contains("approval_signature_invalid")),
+            "rejection should be durably noted"
+        );
+
+        // Session survives: a subsequent request still routes.
+        let resp = single_request(&d.config.socket, auth_req()).await.unwrap();
+        assert!(matches!(resp, IpcResponse::Body(_)));
+    }
+
+    /// Exit criterion (7.1): ListServices routed over the session.
+    #[tokio::test]
+    async fn list_services_roundtrip() {
+        let d = spawn_daemon("route-services").await;
+        start_session(&d).await;
+
+        let resp = single_request(&d.config.socket, IpcRequest::ListServices)
+            .await
+            .unwrap();
+        match resp {
+            IpcResponse::Services(names) => assert_eq!(names, vec!["github", "aws"]),
+            other => panic!("expected Services, got {other:?}"),
+        }
+    }
+
+    /// Exit criterion (7.1): concurrent shims during one active request
+    /// see consistent state -- the second request serializes behind the
+    /// first (no interleaved protocol state), status stays readable,
+    /// and every answer is well-formed.
+    #[tokio::test]
+    async fn concurrent_requests_serialize_and_state_stays_consistent() {
+        let d = spawn_daemon("route-concurrent").await;
+        // First request gets silence (times out); the queued one gets
+        // approved once it reaches the phone.
+        d.phone_ctl.send(PhoneAction::NoReply).await.unwrap();
+        d.phone_ctl.send(PhoneAction::Approve).await.unwrap();
+        start_session(&d).await;
+        let socket = d.config.socket.clone();
+
+        let s1 = socket.clone();
+        let first = tokio::spawn(async move { single_request(&s1, auth_req()).await.unwrap() });
+        let s2 = socket.clone();
+        let second = tokio::spawn(async move { single_request(&s2, auth_req()).await.unwrap() });
+        let s3 = socket.clone();
+        let reader = tokio::spawn(async move {
+            for _ in 0..10 {
+                match single_request(&s3, IpcRequest::Status).await.unwrap() {
+                    IpcResponse::Status { .. } => {}
+                    other => panic!("status corrupted during routing: {other:?}"),
+                }
+            }
+        });
+
+        // First times out (short window), second completes after its
+        // queued turn.
+        match first.await.unwrap() {
+            IpcResponse::Error {
+                code, retryable, ..
+            } => {
+                assert_eq!(code, "conveyance/approval_timeout");
+                assert!(retryable);
+            }
+            other => panic!("expected timeout on first, got {other:?}"),
+        }
+        assert!(matches!(second.await.unwrap(), IpcResponse::Body(_)));
+        reader.await.unwrap();
+
+        let types: Vec<String> = LogDb::open(&d.config.executions_db)
+            .unwrap()
+            .events()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.req_id != [0u8; 16])
+            .map(|e| e.event_type)
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                "approval_request",
+                "request_timeout",
+                "approval_request",
+                "approval_granted",
+                "execute_sent",
+                "execute_result",
+            ],
+            "serialized trails expected: {types:?}"
+        );
+    }
+
+    /// Exit criterion (7.1): after restart, an orphaned req_id is
+    /// visible as request_timeout with the crashed_before_terminal
+    /// reason. Mirrors run_with's ordering exactly (refuse -> sweep ->
+    /// serve) minus the signal wait.
+    #[tokio::test]
+    async fn crash_recovery_sweep_marks_orphans_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let keys = test_support::MockKeyProvider::new();
+        let pc_identity = StoredIdentity::generate(&OsEntropy).unwrap();
+        let config = DaemonConfig {
+            socket: test_support::unique_socket_pub("crash-sweep"),
+            pairings_db: dir.path().join("pairings.db"),
+            executions_db: dir.path().join("executions.db"),
+            identity_file: dir.path().join("identity.enc"),
+            session_params: test_support::pub_test_params(),
+        };
+        pc_identity
+            .save(&config.identity_file, &keys, &OsEntropy)
+            .unwrap();
+
+        // Simulate the previous life: one request died between execute
+        //_sent and any terminal row.
+        {
+            let db = LogDb::open(&config.executions_db).unwrap();
+            let mut orphan = [0u8; 16];
+            orphan[0] = 0xAB;
+            for event_type in ["approval_request", "execute_sent"] {
+                db.append(&LogEvent {
+                    req_id: orphan,
+                    event_type: event_type.into(),
+                    payload_json: r#"{"op":"authenticated_request"}"#.into(),
+                    timestamp: 1_700_000_000,
+                })
+                .unwrap();
+            }
+        }
+
+        // "Restart": refuse -> sweep (run_with's startup order).
+        let stores = refuse_to_start_with(&config, &keys).unwrap();
+        let swept = sweep_orphaned_requests(&stores.log).unwrap();
+        assert_eq!(swept, 1);
+
+        let rows: Vec<LogEvent> = stores
+            .log
+            .events()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.event_type == "request_timeout")
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].req_id[0], 0xAB);
+        let payload: serde_json::Value = serde_json::from_str(&rows[0].payload_json).unwrap();
+        assert_eq!(payload["reason"], json!(CRASHED_BEFORE_TERMINAL));
+        assert_eq!(payload["orphaned_after"], json!("execute_sent"));
+
+        // And the restarted daemon serves with a verifiable chain.
+        let state = assemble_state(
+            &config,
+            stores,
+            DaemonDeps::new(Box::new(test_support::NoDialer)),
+        );
+        let shutdown = server::start_ipc_server(&config, state.clone())
+            .await
+            .expect("restarted daemon binds");
+        match single_request(&config.socket, IpcRequest::Status)
+            .await
+            .unwrap()
+        {
+            IpcResponse::Status { .. } => {}
+            other => panic!("{other:?}"),
+        }
+        shutdown.send(true).unwrap();
     }
 }

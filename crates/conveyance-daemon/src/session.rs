@@ -24,11 +24,14 @@
 //! Phase 7.1 routes authenticated requests through this same loop; the
 //! chunk-handling arm is where those messages land.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use conveyance_core::crypto::Secret;
 use conveyance_core::crypto::hashchain::LogEvent;
+use conveyance_core::crypto::sign::IdentityPublicKey;
+use conveyance_core::crypto::{OsEntropy, Secret};
+use conveyance_core::error::ConveyanceError;
 use conveyance_core::session::{
     EndReason, PeerIdentity, Role, Session as CoreSession, SessionHandshake, SessionParams,
     TimerEvent,
@@ -36,11 +39,16 @@ use conveyance_core::session::{
 use conveyance_core::storage::logdb::LogDb;
 use conveyance_core::storage::pairings::PairingsDb;
 use conveyance_core::transport::{InboundAssembler, TransportError};
+use conveyance_core::wire::binding::ApprovedRequestTracker;
 use conveyance_core::wire::framing;
-use conveyance_core::wire::message as wire;
+use conveyance_core::wire::message::{
+    self as wire, ApprovalRequest, ApprovalResponse, Decision, ExecuteRequest, ExecuteResponse,
+    OpType, Status,
+};
 
 use tokio::sync::{mpsc, oneshot, watch};
 
+use crate::ipc::IpcResponse;
 use crate::phone::{PhoneDialer, PhoneLink};
 
 /// How long any single step toward an ACTIVE session may take: the
@@ -49,10 +57,30 @@ use crate::phone::{PhoneDialer, PhoneLink};
 /// rather than wedging the owner task.
 const HANDSHAKE_TOTAL_BUDGET: Duration = Duration::from_secs(30);
 
+/// Spec's approval window: the user has 60 s to respond on the phone.
+pub(crate) const APPROVAL_WINDOW: Duration = Duration::from_secs(60);
+/// Execution window: the phone performs the HTTP round-trip after
+/// approval. The spec names no number; 60 s covers slow APIs without
+/// letting a dead session pin a shim request indefinitely. Overridable
+/// in [`SessionDeps`] so tests do not wait real minutes.
+pub(crate) const EXECUTE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Bound on queued routed requests while one is in flight. One shim =
+/// one outstanding tool call in practice; anything past this gets an
+/// immediate retryable busy error rather than growing unbounded.
+const ROUTE_QUEUE_CAP: usize = 8;
+
+/// Terminal log states for a req_id: once one of these exists, crash
+/// recovery (phase 7.1 sweep) considers the request fully accounted
+/// for. See `recovery::sweep_orphaned_requests`.
+pub(crate) const TERMINAL_EVENT_TYPES: [&str; 3] =
+    ["execute_result", "approval_denied", "request_timeout"];
+
 /// Reserved correlation id for log rows that belong to no tool call
-/// (session lifecycle rows). Zeroed bytes cannot collide with a random
-/// ReqId in practice and are trivially filterable by log tooling.
-const LIFECYCLE_REQ_ID: [u8; 16] = [0u8; 16];
+/// (session lifecycle rows today; the recovery sweep writes real
+/// req_ids). Zeroed bytes cannot collide with a random ReqId in
+/// practice and are trivially filterable by log tooling.
+pub(crate) const LIFECYCLE_REQ_ID: [u8; 16] = [0u8; 16];
 
 // ---- errors -------------------------------------------------------------------
 
@@ -119,6 +147,20 @@ impl OpError {
     fn internal(context: &str) -> Self {
         Self::new("conveyance/internal", context, false)
     }
+
+    fn from_core(err: ConveyanceError) -> Self {
+        Self::from_conveyance(&err)
+    }
+
+    /// Busy, not broken: a routed request arrived while the queue was
+    /// full. Retryable so the shim can back off.
+    fn busy() -> Self {
+        Self::new(
+            "conveyance/internal",
+            "another request is awaiting the phone; retry shortly",
+            true,
+        )
+    }
 }
 
 fn dead_owner() -> OpError {
@@ -147,6 +189,27 @@ enum SessionCmd {
     /// Watchdog output, forwarded by a small pump task so the owner
     /// selects over ONE queue instead of racing two sources.
     Timer(TimerEvent),
+    /// Route an authenticated operation to the phone over the live
+    /// session. Serialized behind any already-in-flight request; see
+    /// [`Router`](ActiveParts) queue semantics.
+    Route {
+        op: RoutedOp,
+        reply: oneshot::Sender<Result<IpcResponse, OpError>>,
+    },
+}
+
+/// The two operations 7.1 routes across the Noise session. Everything
+/// else the shim can ask is answered locally (status/check/session).
+#[derive(Clone, Debug)]
+pub enum RoutedOp {
+    AuthenticatedRequest {
+        service: String,
+        method: String,
+        endpoint: String,
+        params: serde_json::Value,
+        requested_by: Option<String>,
+    },
+    ListServices,
 }
 
 /// Snapshot of the session's timing budget, for `check_session`.
@@ -199,6 +262,19 @@ impl SessionHandle {
         rx.await.ok().flatten()
     }
 
+    /// Route an authenticated operation over the active session.
+    /// Errors carry the spec code table verbatim; cold-start callers
+    /// are expected to have checked `is_active()` first (the owner
+    /// re-checks anyway).
+    pub async fn route(&self, op: RoutedOp) -> Result<IpcResponse, OpError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCmd::Route { op, reply: tx })
+            .await
+            .map_err(|_| dead_owner())?;
+        rx.await.map_err(|_| dead_owner())?
+    }
+
     #[cfg(test)]
     pub(crate) async fn wait_active(&self, want: bool) {
         let mut rx = self.active_rx.clone();
@@ -230,6 +306,44 @@ struct ActiveParts {
     tx_seq: u16,
     started_at: Instant,
     last_activity: Instant,
+
+    // ---- routing (phase 7.1) -------------------------------------
+    /// Ed25519 public half of the paired phone, captured at start so
+    /// every Approval/Execute signature verifies against the identity
+    /// this session actually authenticated (KK guarantees the DH peer;
+    /// signatures make each response independently portable evidence).
+    phone_id_pub: IdentityPublicKey,
+    /// Anti-TOCTOU + replay defense: approvals are consumed on first
+    /// execution. Per-session by design -- approvals never survive a
+    /// session boundary.
+    binding: ApprovedRequestTracker,
+    /// Routed requests waiting for the current one to finish.
+    route_queue: VecDeque<RouteCmd>,
+    in_flight: Option<InFlight>,
+}
+
+/// A queued routed request awaiting its turn at the phone.
+struct RouteCmd {
+    op: RoutedOp,
+    reply: oneshot::Sender<Result<IpcResponse, OpError>>,
+}
+
+/// One routed request's position in the approval->execute pipeline.
+struct InFlight {
+    stage: Stage,
+    req_id: wire::ReqId,
+    /// The ApprovalRequest while waiting for its response; kept so an
+    /// approval can be bound and the matching ExecuteRequest built from
+    /// exactly the bytes that were shown to the user.
+    approval: Option<ApprovalRequest>,
+    deadline: Instant,
+    reply: oneshot::Sender<Result<IpcResponse, OpError>>,
+}
+
+enum Stage {
+    Approval,
+    Execute,
+    Services,
 }
 
 impl ActiveParts {
@@ -276,6 +390,12 @@ pub struct SessionDeps {
     pub log: Arc<LogDb>,
     pub local_static: Secret<32>,
     pub params: SessionParams,
+    /// Approval/execute response windows. Production uses the spec's
+    /// 60 s for both; tests shorten them so timeout paths stay fast.
+    /// Not user-configurable: shortening the approval window is a UX
+    /// tradeoff the spec already fixed at 60 s.
+    pub approval_window: Duration,
+    pub execute_window: Duration,
 }
 
 struct Owner {
@@ -302,7 +422,15 @@ pub fn spawn_session_owner(deps: SessionDeps) -> SessionHandle {
         cmd_rx,
         active_tx,
     };
-    tokio::spawn(owner.run());
+    let join = tokio::spawn(owner.run());
+    #[cfg(test)]
+    tokio::spawn(async move {
+        if let Err(e) = join.await {
+            eprintln!("SESSION OWNER TASK DIED: {e}");
+        }
+    });
+    #[cfg(not(test))]
+    drop(join);
 
     SessionHandle { cmd_tx, active_rx }
 }
@@ -330,6 +458,19 @@ impl Owner {
     async fn run_active(&mut self, parts: ActiveParts) -> bool {
         let mut slot: Option<ActiveParts> = Some(parts);
         loop {
+            // Deadline snapshot BEFORE any mutable borrow: the inbound
+            // future below holds `slot` mutably across the select, so
+            // this arm must not capture it.
+            let deadline = slot
+                .as_ref()
+                .and_then(|p| p.in_flight.as_ref())
+                .map(|f| f.deadline);
+            let route_deadline = async {
+                match deadline {
+                    Some(d) => tokio::time::sleep_until(tokio::time::Instant::from_std(d)).await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
             // Recreated each iteration (see module docs for why that is
             // safe rather than sloppy).
             let Some(live) = slot.as_mut() else {
@@ -351,6 +492,12 @@ impl Owner {
                     if self.on_chunk(live, chunk).await {
                         return true; // ended; caller falls back to IDLE
                     }
+                }
+                _ = route_deadline => {
+                    let Some(live) = slot.as_mut() else {
+                        return true;
+                    };
+                    self.route_timed_out(live).await;
                 }
             }
         }
@@ -403,6 +550,31 @@ impl Owner {
                     None => Flow::KeepGoing,
                 }
             }
+            SessionCmd::Route { op, reply } => {
+                let Some(parts) = slot.as_mut() else {
+                    // Defense in depth: dispatch gates on the watch
+                    // channel first; this arm only fires on a race
+                    // between the two.
+                    let _ = reply.send(Err(OpError::from_core(ConveyanceError::NoSession)));
+                    return Flow::KeepGoing;
+                };
+
+                if parts.in_flight.is_some() {
+                    // Serialize: one conversation with the phone at a
+                    // time. Queued requests see consistent state (their
+                    // own turn arrives, or session_ended if the session
+                    // dies first) -- never interleaved protocol state.
+                    if parts.route_queue.len() >= ROUTE_QUEUE_CAP {
+                        let _ = reply.send(Err(OpError::busy()));
+                    } else {
+                        parts.route_queue.push_back(RouteCmd { op, reply });
+                    }
+                    return Flow::KeepGoing;
+                }
+
+                self.start_route(parts, op, reply).await;
+                Flow::KeepGoing
+            }
         }
     }
 
@@ -431,8 +603,31 @@ impl Owner {
         };
 
         for message in messages {
+            // Assembled frames are Noise CIPHERTEXT; nothing below the
+            // cipher boundary may be interpreted as protocol data.
+            let plaintext = match parts.session.receive(&message) {
+                Ok(p) => p,
+                Err(_) => {
+                    // Tampering or desynchronization: terminal per the
+                    // phase-3 contract (receive errors end the session).
+                    self.teardown(parts, EndReason::ProtocolViolation);
+                    return true;
+                }
+            };
             let decoded: Option<wire::WireMessage> =
-                ciborium::de::from_reader(&mut &message[..]).ok();
+                ciborium::de::from_reader(&mut &plaintext[..]).ok();
+
+            // In-flight interception runs BEFORE the generic arms: a
+            // response that answers our routed request is consumed by
+            // it. SessionEnd and Ping still take priority below because
+            // they can never match a stage.
+            if let Some(ended) = self.try_complete_route(parts, &decoded).await {
+                if ended {
+                    return true;
+                }
+                continue;
+            }
+
             match decoded {
                 Some(wire::WireMessage::SessionEnd(_)) => {
                     // Kill switch / phone-side end arrives as traffic.
@@ -494,9 +689,22 @@ impl Owner {
     /// stopping the watchdog), link teardown, durable log row,
     /// broadcast. Order matters: the log row lands before any shutdown
     /// waiter proceeds to checkpoint the database.
+    ///
+    /// Any routed request still in flight or queued is answered with
+    /// `conveyance/session_ended` -- a session boundary is exactly the
+    /// "ended mid-request" case that code exists for.
     fn teardown(&self, parts: &mut ActiveParts, reason: EndReason) {
         parts.session.end(reason);
         parts.link.shutdown();
+
+        let ended = Err(OpError::from_core(ConveyanceError::SessionEnded));
+        if let Some(flight) = parts.in_flight.take() {
+            let _ = flight.reply.send(ended.clone());
+        }
+        while let Some(cmd) = parts.route_queue.pop_front() {
+            let _ = cmd.reply.send(ended.clone());
+        }
+
         let _ = self.deps.log.append(&LogEvent {
             req_id: LIFECYCLE_REQ_ID,
             event_type: "session_end".into(),
@@ -515,6 +723,391 @@ impl Owner {
             payload_json: format!(r#"{{"note":"{note}"}}"#),
             timestamp: unix_now(),
         });
+    }
+
+    /// Canonical-JSON log row tied to a specific req_id. Payloads are
+    /// built through `canonicalize` so PC rows compare byte-for-byte
+    /// with phone rows during phase 9 diffing -- a plain `to_string()`
+    /// would serialize maps in insertion order and quietly break that.
+    fn log_req(&self, req_id: wire::ReqId, event_type: &str, payload: serde_json::Value) {
+        use conveyance_core::crypto::canonical_json::canonicalize;
+        let payload_json = canonicalize(&payload).unwrap_or_else(|_| payload.to_string());
+        let _ = self.deps.log.append(&LogEvent {
+            req_id: req_id.0,
+            event_type: event_type.into(),
+            payload_json,
+            timestamp: unix_now(),
+        });
+    }
+
+    // ---- routing (phase 7.1) -----------------------------------------
+
+    /// Kick off one routed conversation with the phone. The reply is
+    /// either installed into `in_flight` (answered later by a chunk or
+    /// the deadline), answered immediately (validation failures), or --
+    /// if the transport died mid-send -- answered `session_ended` after
+    /// full teardown.
+    async fn start_route(
+        &mut self,
+        parts: &mut ActiveParts,
+        op: RoutedOp,
+        reply: oneshot::Sender<Result<IpcResponse, OpError>>,
+    ) {
+        let prepared = match &op {
+            RoutedOp::AuthenticatedRequest {
+                service,
+                method,
+                endpoint,
+                params,
+                requested_by,
+            } => {
+                let req_id = match wire::ReqId::generate(&OsEntropy) {
+                    Ok(id) => id,
+                    Err(_) => {
+                        let _ = reply.send(Err(OpError::internal("entropy failure")));
+                        return;
+                    }
+                };
+                let approval = match ApprovalRequest::new(
+                    req_id,
+                    OpType::AuthenticatedRequest,
+                    service.clone(),
+                    method.clone(),
+                    endpoint.clone(),
+                    params.clone(),
+                    requested_by.clone(),
+                    unix_now(),
+                ) {
+                    Ok(a) => a,
+                    Err(_) => {
+                        let _ =
+                            reply.send(Err(OpError::internal("request outside canonical domain")));
+                        return;
+                    }
+                };
+
+                let mut detail = serde_json::json!({
+                    "op_type": "authenticated_request",
+                    "service": service,
+                    "method": method,
+                    "endpoint": endpoint,
+                });
+                if let Some(by) = requested_by {
+                    detail["requested_by"] = serde_json::Value::String(by.clone());
+                }
+                self.log_req(req_id, "approval_request", detail);
+
+                match wire::encode(&wire::WireMessage::ApprovalRequest(approval.clone())) {
+                    Ok(bytes) => Some((req_id, bytes, Stage::Approval, Some(approval))),
+                    Err(_) => {
+                        let _ =
+                            reply.send(Err(OpError::internal("could not encode approval request")));
+                        return;
+                    }
+                }
+            }
+            RoutedOp::ListServices => {
+                let req_id = match wire::ReqId::generate(&OsEntropy) {
+                    Ok(id) => id,
+                    Err(_) => {
+                        let _ = reply.send(Err(OpError::internal("entropy failure")));
+                        return;
+                    }
+                };
+                self.log_req(req_id, "list_services_request", serde_json::json!({}));
+                let msg =
+                    wire::WireMessage::ListServicesRequest(wire::ListServicesRequest { req_id });
+                match wire::encode(&msg) {
+                    Ok(bytes) => Some((req_id, bytes, Stage::Services, None)),
+                    Err(_) => {
+                        let _ = reply.send(Err(OpError::internal("could not encode request")));
+                        return;
+                    }
+                }
+            }
+        };
+        let Some((req_id, bytes, stage, approval)) = prepared else {
+            return;
+        };
+        if parts.send_over_session(&bytes).await.is_err() {
+            // Broken link mid-send: tear down fully (which answers every
+            // OTHER waiter), then answer this caller too.
+            self.teardown(parts, EndReason::PeerDisconnected);
+            let _ = reply.send(Err(OpError::from_core(ConveyanceError::SessionEnded)));
+            return;
+        }
+
+        let window = match stage {
+            Stage::Approval => self.deps.approval_window,
+            Stage::Services | Stage::Execute => self.deps.execute_window,
+        };
+        parts.in_flight = Some(InFlight {
+            stage,
+            req_id,
+            approval,
+            deadline: Instant::now() + window,
+            reply,
+        });
+        // Activity: routing traffic is legitimate interaction.
+        let _ = parts.session.on_activity();
+        parts.last_activity = Instant::now();
+    }
+
+    /// If an inbound message completes the in-flight request, handle it
+    /// end-to-end and return `Some(_)`. `None` means "not mine" -- the
+    /// generic arms (ping, session end, unsolicited) take over.
+    ///
+    /// `Some(false)`: handled, session lives. `Some(true)`: handled but
+    /// the session ended (transport died mid-handling).
+    async fn try_complete_route(
+        &mut self,
+        parts: &mut ActiveParts,
+        decoded: &Option<wire::WireMessage>,
+    ) -> Option<bool> {
+        let flight = parts.in_flight.as_ref()?;
+        match (decoded.as_ref(), &flight.stage) {
+            (Some(wire::WireMessage::ApprovalResponse(rsp)), Stage::Approval)
+                if rsp.req_id == flight.req_id =>
+            {
+                let flight = parts.in_flight.take().expect("checked above");
+                let ended = self.finish_approval(parts, rsp, flight).await;
+                if !ended {
+                    self.drain_route_queue(parts).await;
+                }
+                Some(ended)
+            }
+            (Some(wire::WireMessage::ExecuteResponse(rsp)), Stage::Execute)
+                if rsp.req_id == flight.req_id =>
+            {
+                let flight = parts.in_flight.take().expect("checked above");
+                let ended = self.finish_execute(parts, rsp, flight).await;
+                if !ended {
+                    self.drain_route_queue(parts).await;
+                }
+                Some(ended)
+            }
+            (Some(wire::WireMessage::ListServicesResponse(rsp)), Stage::Services)
+                if rsp.req_id == flight.req_id =>
+            {
+                let flight = parts.in_flight.take().expect("checked above");
+                let _ = flight
+                    .reply
+                    .send(Ok(IpcResponse::Services(rsp.services.clone())));
+                self.drain_route_queue(parts).await;
+                Some(false)
+            }
+            _ => None,
+        }
+    }
+
+    /// Verify + act on the phone's approval decision.
+    ///
+    /// Returns true only when the session had to be torn down. Takes
+    /// the flight by value: every path either answers its reply or
+    /// re-installs a new flight, so ownership is linear here.
+    #[allow(clippy::too_many_lines)]
+    async fn finish_approval(
+        &mut self,
+        parts: &mut ActiveParts,
+        rsp: &ApprovalResponse,
+        mut flight: InFlight,
+    ) -> bool {
+        let approval = match flight.approval.take() {
+            Some(a) => a,
+            None => {
+                let _ = flight
+                    .reply
+                    .send(Err(OpError::internal("approval state lost")));
+                return false;
+            }
+        };
+
+        // Signature FIRST: nothing about the response is trusted until
+        // it verifies against the identity this session authenticated.
+        if rsp.verify_signature(&parts.phone_id_pub).is_err() {
+            self.note("approval_signature_invalid");
+            let _ = flight.reply.send(Err(OpError::new(
+                "conveyance/internal",
+                "phone response rejected",
+                false,
+            )));
+            return false;
+        }
+
+        match rsp.decision {
+            Decision::Denied => {
+                self.log_req(
+                    approval.req_id,
+                    "approval_denied",
+                    reason_payload("denied", rsp.reason.clone()),
+                );
+                let _ = flight
+                    .reply
+                    .send(Err(OpError::from_core(ConveyanceError::ApprovalDenied)));
+                false
+            }
+            Decision::Expired => {
+                // Phone's own window lapsed before the user chose. From
+                // the shim's seat this is indistinguishable from our
+                // own timeout -- both mean "ask again".
+                self.log_req(
+                    approval.req_id,
+                    "approval_denied",
+                    reason_payload("expired", rsp.reason.clone()),
+                );
+                let _ = flight
+                    .reply
+                    .send(Err(OpError::from_core(ConveyanceError::ApprovalTimeout)));
+                false
+            }
+            Decision::Approved => {
+                self.log_req(
+                    approval.req_id,
+                    "approval_granted",
+                    reason_payload("approved", rsp.reason.clone()),
+                );
+
+                if parts.binding.record_approval(&approval, rsp).is_err() {
+                    // record_approval only mismatches req_ids between
+                    // the pair we just matched -- unreachable, but a
+                    // loud refusal beats executing on bad state.
+                    let _ = flight.reply.send(Err(OpError::internal("binding failure")));
+                    return false;
+                }
+
+                let execute = match ExecuteRequest::new(
+                    approval.req_id,
+                    approval.op_type,
+                    approval.service.clone(),
+                    approval.method.clone(),
+                    approval.endpoint.clone(),
+                    approval.params.clone(),
+                    approval.requested_by.clone(),
+                    approval.timestamp,
+                ) {
+                    Ok(e) => e,
+                    Err(_) => {
+                        let _ = flight
+                            .reply
+                            .send(Err(OpError::internal("rebuild failed binding")));
+                        return false;
+                    }
+                };
+
+                // Local half of the anti-TOCTOU check: consumes the
+                // approval so this req_id can never execute twice from
+                // our side, even if the phone were lenient.
+                if parts.binding.validate_execute(&execute).is_err() {
+                    let _ = flight
+                        .reply
+                        .send(Err(OpError::from_core(ConveyanceError::ApprovalMismatch)));
+                    return false;
+                }
+
+                self.log_req(execute.req_id, "execute_sent", serde_json::json!({}));
+
+                let bytes = match wire::encode(&wire::WireMessage::ExecuteRequest(execute)) {
+                    Ok(b) => b,
+                    Err(_) => {
+                        let _ = flight.reply.send(Err(OpError::internal("encode failed")));
+                        return false;
+                    }
+                };
+                if parts.send_over_session(&bytes).await.is_err() {
+                    self.teardown(parts, EndReason::PeerDisconnected);
+                    let _ = flight
+                        .reply
+                        .send(Err(OpError::from_core(ConveyanceError::SessionEnded)));
+                    return true;
+                }
+
+                // Still awaiting the execution outcome: re-install the
+                // flight with the execute deadline, keeping the same
+                // reply channel.
+                parts.in_flight = Some(InFlight {
+                    stage: Stage::Execute,
+                    req_id: flight.req_id,
+                    approval: None,
+                    deadline: Instant::now() + self.deps.execute_window,
+                    reply: flight.reply,
+                });
+                let _ = parts.session.on_activity();
+                parts.last_activity = Instant::now();
+                false
+            }
+        }
+    }
+
+    /// Verify + log the executed outcome; propagate the body verbatim
+    /// to the shim.
+    async fn finish_execute(
+        &mut self,
+        parts: &mut ActiveParts,
+        rsp: &ExecuteResponse,
+        flight: InFlight,
+    ) -> bool {
+        if rsp.verify_signature(&parts.phone_id_pub).is_err() {
+            self.note("execute_signature_invalid");
+            let _ = flight.reply.send(Err(OpError::new(
+                "conveyance/internal",
+                "phone response rejected",
+                false,
+            )));
+            return false;
+        }
+
+        let mut detail = serde_json::json!({
+            "status": match rsp.status {
+                Status::Ok => "ok",
+                Status::Error => "error",
+                Status::Denied => "denied",
+            },
+            "body": rsp.body,
+        });
+        if let Some(code) = rsp.http_status {
+            detail["http_status"] = serde_json::Value::from(code);
+        }
+        self.log_req(rsp.req_id, "execute_result", detail);
+
+        let _ = flight.reply.send(Ok(IpcResponse::Body(rsp.body.clone())));
+        false
+    }
+
+    /// Deadline fired for the in-flight request. Live timeouts are
+    /// recorded distinctly from crash recovery's
+    /// `crashed_before_terminal` (phase 7.1 sweep).
+    async fn route_timed_out(&mut self, parts: &mut ActiveParts) {
+        let Some(flight) = parts.in_flight.take() else {
+            return;
+        };
+        let (op_kind, err) = match flight.stage {
+            Stage::Approval | Stage::Execute => (
+                "authenticated_request",
+                OpError::from_core(ConveyanceError::ApprovalTimeout),
+            ),
+            Stage::Services => (
+                "list_services",
+                OpError::new(
+                    "conveyance/internal",
+                    "phone did not answer the list_services request",
+                    true,
+                ),
+            ),
+        };
+        self.log_req(
+            flight.req_id,
+            "request_timeout",
+            serde_json::json!({"reason": crate::recovery::TIMEOUT_REASON, "op": op_kind}),
+        );
+        let _ = flight.reply.send(Err(err));
+        self.drain_route_queue(parts).await;
+    }
+
+    /// Start the next queued routed request, if any.
+    async fn drain_route_queue(&mut self, parts: &mut ActiveParts) {
+        if let Some(cmd) = parts.route_queue.pop_front() {
+            self.start_route(parts, cmd.op, cmd.reply).await;
+        }
     }
 
     /// Dial + handshake + timers. On success returns the live parts;
@@ -553,14 +1146,14 @@ impl Owner {
             local_static: self.deps.local_static.clone(),
             remote_static: peer_row.dh_pub,
         };
-        let mut session = match responder_handshake(link.as_mut(), &peer, self.deps.params).await {
-            Ok(s) => s,
-            Err(err) => {
-                link.shutdown();
-                return Err(err);
-            }
-        };
-
+        let (mut session, tx_seq, inbound) =
+            match responder_handshake(link.as_mut(), &peer, self.deps.params).await {
+                Ok(triple) => triple,
+                Err(err) => {
+                    link.shutdown();
+                    return Err(err);
+                }
+            };
         // ---- timers ---------------------------------------------------------
         // Watchdog output is pumped into our command queue so timer
         // events contend with IPC commands in one place, in order.
@@ -585,23 +1178,44 @@ impl Owner {
         Ok(ActiveParts {
             session,
             link,
-            assembler: InboundAssembler::new(),
-            tx_seq: 0,
+            // Continues the handshake's inbound framing state; the
+            // outbound tx_seq likewise continues its numbering. Both
+            // directions are per-CONNECTION sequences.
+            assembler: inbound,
+            tx_seq,
             started_at: Instant::now(),
             last_activity: Instant::now(),
+            phone_id_pub: IdentityPublicKey::from_bytes(&peer_row.id_pub)
+                .map_err(|_| OpError::internal("stored pairing holds a malformed identity key"))?,
+            binding: ApprovedRequestTracker::new(),
+            route_queue: VecDeque::new(),
+            in_flight: None,
         })
     }
 }
 
-fn unix_now() -> i64 {
+pub(crate) fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
 
+/// Log payload for a decision row. Mirrors the signature-omission rule:
+/// an absent reason stays absent, never null.
+fn reason_payload(decision: &str, reason: Option<String>) -> serde_json::Value {
+    let mut v = serde_json::json!({ "decision": decision });
+    if let Some(r) = reason {
+        v["reason"] = serde_json::Value::String(r);
+    }
+    v
+}
 /// Responder half of Noise_KK over a live link: read message 1, write
-/// message 2, promote to an ACTIVE session.
+/// message 2, promote to an ACTIVE session. Returns the session, the
+/// next free outbound frame sequence, AND the half-warmed inbound
+/// assembler -- both directions must continue exactly where the
+/// handshake stopped, because framers enforce sequence continuity per
+/// CONNECTION, not per phase.
 ///
 /// The initiator is always the phone (spec "Session start"); production
 /// code never takes the initiator role anywhere.
@@ -609,16 +1223,17 @@ async fn responder_handshake(
     link: &mut dyn PhoneLink,
     identity: &PeerIdentity,
     params: SessionParams,
-) -> Result<CoreSession, OpError> {
+) -> Result<(CoreSession, u16, InboundAssembler), OpError> {
     let mut hs = SessionHandshake::begin(Role::Responder, identity)
         .map_err(|_| OpError::handshake_failed())?;
 
     let deadline = Instant::now() + HANDSHAKE_TOTAL_BUDGET;
     let mut assembler = InboundAssembler::new();
+    let mut tx_seq: u16 = 0;
 
     loop {
         if hs.is_finished() {
-            return establish(hs, params);
+            return establish(hs, params).map(|s| (s, tx_seq, assembler));
         }
 
         let chunk = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), link.recv())
@@ -642,8 +1257,9 @@ async fn responder_handshake(
                 let reply = hs
                     .write_message(b"")
                     .map_err(|_| OpError::handshake_failed())?;
-                let (frames, _) = framing::split_message(&reply, link.max_write_len(), 0)
+                let (frames, next) = framing::split_message(&reply, link.max_write_len(), tx_seq)
                     .map_err(|_| OpError::handshake_failed())?;
+                tx_seq = next;
                 for frame in frames {
                     link.send(&frame)
                         .await
@@ -651,7 +1267,7 @@ async fn responder_handshake(
                 }
             }
             if hs.is_finished() {
-                return establish(hs, params);
+                return establish(hs, params).map(|s| (s, tx_seq, assembler));
             }
         }
     }
