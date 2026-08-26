@@ -295,17 +295,21 @@ mod connect_error_tests {
     }
 
     /// The kind-based mapping relies on std's OS-error normalization;
-    /// pin the two errnos Linux/macOS actually produce for absence and
+    /// pin the exact errnos each Unix actually produces for absence and
     /// refusal so an OS/toolchain change cannot shift them unnoticed.
+    /// Errno VALUES differ across Unices (ECONNREFUSED is 111 on Linux,
+    /// 61 on macOS) even though they normalize to the same ErrorKind --
+    /// which is precisely why the mapping keys on kinds, not codes.
     #[cfg(unix)]
     #[test]
     fn os_errnos_normalize_to_the_kinds_we_enumerate() {
-        // ENOENT (POSIX-fixed value 2).
+        // ENOENT: POSIX-fixed at 2 everywhere.
         assert_eq!(
             std::io::Error::from_raw_os_error(2).kind(),
             ErrorKind::NotFound
         );
-        // ECONNREFUSED (Linux 111; macOS 61 normalizes to the same kind).
+
+        #[cfg(target_os = "linux")]
         assert_eq!(
             std::io::Error::from_raw_os_error(111).kind(),
             ErrorKind::ConnectionRefused
