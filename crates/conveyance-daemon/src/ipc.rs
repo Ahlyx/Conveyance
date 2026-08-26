@@ -173,6 +173,51 @@ pub fn local_name(socket: &str) -> Result<interprocess::local_socket::Name<'_>, 
         .map_err(|e| IpcError::Io(format!("invalid socket name {socket}: {e}")))
 }
 
+/// Which io::ErrorKind values from a failed IPC connect mean "nothing
+/// is listening at this address" -- i.e. the daemon is not running and
+/// starting one may help (retryable). Enumerated explicitly, with the
+/// platform flavor each kind covers, rather than a catch-all: an
+/// unmapped kind must surface as a loud unknown error, never silently
+/// masquerade as "daemon not running".
+///
+/// * [`ErrorKind::NotFound`] -- the ADDRESS ITSELF does not exist.
+///   Windows: named pipe absent (`ERROR_FILE_NOT_FOUND` from
+///   CreateFile). macOS/other Unices using filesystem sockets: path
+///   absent (ENOENT).
+/// * [`ErrorKind::ConnectionRefused`] -- the address exists but no
+///   listener accepted: Linux abstract-namespace connect to an
+///   unbound name (ECONNREFUSED), and Unix-domain connects to a bound
+///   but listener-less socket on Linux/macOS alike. This is the
+///   flavor Linux CI actually produces for our namespaced names.
+/// * [`ErrorKind::TimedOut`] -- Windows named-pipe opens can surface
+///   as timeout when the pipe name does not exist; from the caller's
+///   seat it reads identically to "no daemon". Kept deliberately,
+///   documented quirk of the Windows pipe namespace.
+///
+/// Deliberately NOT mapped: PermissionDenied (a daemon IS there --
+/// access is the problem, "not running" would be a lie),
+/// ConnectionReset/NotConnected (mid-transport conditions, not
+/// connect-phase absence), AddrInUse (server-side bind only).
+fn is_daemon_unreachable(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::NotFound
+            | std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::TimedOut
+    )
+}
+
+/// Apply the daemon-unreachable classification to a failed connect.
+pub(crate) fn map_connect_error(e: std::io::Error, socket: &str) -> IpcError {
+    if is_daemon_unreachable(e.kind()) {
+        IpcError::NotRunning {
+            path: socket.to_string(),
+        }
+    } else {
+        IpcError::Io(e.to_string())
+    }
+}
+
 /// Connect to the daemon at `socket` and perform one request/response
 /// exchange. Used by CLI subcommands; the daemon-side listener lives in
 /// the server loop instead.
@@ -180,22 +225,133 @@ pub async fn single_request(socket: &str, req: IpcRequest) -> Result<IpcResponse
     use interprocess::local_socket::tokio::prelude::*;
 
     let name = local_name(socket)?;
-    let mut stream = Stream::connect(name).await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            IpcError::NotRunning {
-                path: socket.to_string(),
-            }
-        } else if e.kind() == std::io::ErrorKind::TimedOut {
-            // Windows pipe connect can surface as timeout when the name
-            // simply does not exist; from the caller's seat that reads
-            // identically to "no daemon".
-            IpcError::NotRunning {
-                path: socket.to_string(),
-            }
-        } else {
-            IpcError::Io(e.to_string())
-        }
-    })?;
+    let mut stream = Stream::connect(name)
+        .await
+        .map_err(|e| map_connect_error(e, socket))?;
     write_message(&mut stream, &req).await?;
     read_response(&mut stream).await
+}
+
+#[cfg(test)]
+mod connect_error_tests {
+    use super::*;
+    use std::io::ErrorKind;
+
+    /// Regression matrix for the phase-9 Ubuntu CI failure: Linux's
+    /// abstract-namespace connect to an unbound name yields
+    /// ConnectionRefused, which previously fell through the mapping and
+    /// reached clients as non-retryable. Each row pins ONE kind, the
+    /// platform flavor that produces it, and the required verdict -- a
+    /// future refactor cannot silently drop a flavor.
+    #[test]
+    fn unreachable_flavors_map_to_not_running_per_platform() {
+        let cases: &[(ErrorKind, &str, bool)] = &[
+            // Windows: CreateFile on an absent pipe name.
+            (ErrorKind::NotFound, "windows: pipe name absent", true),
+            // macOS / filesystem-socket platforms: ENOENT on path.
+            (
+                ErrorKind::NotFound,
+                "unix: socket path absent (ENOENT)",
+                true,
+            ),
+            // Linux abstract namespace + any listener-less UDS:
+            // ECONNREFUSED.
+            (
+                ErrorKind::ConnectionRefused,
+                "linux: abstract ns unbound (ECONNREFUSED)",
+                true,
+            ),
+            // Windows quirk: absent pipe can surface as timeout.
+            (ErrorKind::TimedOut, "windows: pipe open timeout", true),
+            // A daemon IS listening; access is the problem. Must stay
+            // unmapped -- "not running" would misdirect the user.
+            (
+                ErrorKind::PermissionDenied,
+                "any: socket exists, access denied",
+                false,
+            ),
+            // Mid-transport conditions, not connect-phase absence.
+            (
+                ErrorKind::ConnectionReset,
+                "any: reset during exchange",
+                false,
+            ),
+            (ErrorKind::NotConnected, "any: transport torn down", false),
+        ];
+
+        for (kind, flavor, expect_unreachable) in cases {
+            let err = std::io::Error::new(*kind, *flavor);
+            let mapped = map_connect_error(err, "test-socket");
+            match (*expect_unreachable, mapped) {
+                (true, IpcError::NotRunning { path }) => {
+                    assert_eq!(path, "test-socket");
+                }
+                (false, IpcError::Io(_)) => {}
+                (expected, actual) => panic!(
+                    "flavor '{flavor}' ({kind:?}): expected unreachable={expected}, got {actual:?}"
+                ),
+            }
+        }
+    }
+
+    /// The kind-based mapping relies on std's OS-error normalization;
+    /// pin the two errnos Linux/macOS actually produce for absence and
+    /// refusal so an OS/toolchain change cannot shift them unnoticed.
+    #[cfg(unix)]
+    #[test]
+    fn os_errnos_normalize_to_the_kinds_we_enumerate() {
+        // ENOENT (POSIX-fixed value 2).
+        assert_eq!(
+            std::io::Error::from_raw_os_error(2).kind(),
+            ErrorKind::NotFound
+        );
+        // ECONNREFUSED (Linux 111; macOS 61 normalizes to the same kind).
+        assert_eq!(
+            std::io::Error::from_raw_os_error(111).kind(),
+            ErrorKind::ConnectionRefused
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            std::io::Error::from_raw_os_error(61).kind(),
+            ErrorKind::ConnectionRefused
+        );
+    }
+
+    /// End-to-end flavor proof: a REAL local-socket connect against a
+    /// name nobody serves must classify as NotRunning on EVERY
+    /// platform, whatever OS error it surfaces as underneath. This is
+    /// the exact path the shim's
+    /// `daemon_unreachable_maps_to_structured_internal_error` test
+    /// exercises; it failed on Ubuntu before ConnectionRefused was
+    /// enumerated.
+    #[tokio::test]
+    async fn real_connect_to_absent_daemon_is_not_running() {
+        use interprocess::local_socket::tokio::prelude::*;
+
+        let unique = format!(
+            "conveyance-absent-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let name = local_name(&unique).unwrap();
+        let connect = Stream::connect(name).await;
+        let err = match connect {
+            Err(e) => e,
+            Ok(_) => panic!("nothing serves this name; connect must fail"),
+        };
+
+        assert!(
+            is_daemon_unreachable(err.kind()),
+            "platform produced kind {:?} ({err}) which we do not recognize as \
+             daemon-unreachable -- add this kind to the enumeration if it is \
+             genuinely an absence flavor",
+            err.kind()
+        );
+        match map_connect_error(err, &unique) {
+            IpcError::NotRunning { path } => assert_eq!(path, unique),
+            other => panic!("expected NotRunning, got {other:?}"),
+        }
+    }
 }
