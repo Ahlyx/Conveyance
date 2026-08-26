@@ -5,5 +5,25 @@ edition.workspace = true
 rust-version.workspace = true
 description = "Conveyance daemon: pairing/session state and BLE connectivity to the phone"
 
+[lib]
+name = "conveyance_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "conveyance-daemon"
+path = "src/main.rs"
+
 [dependencies]
 conveyance-core = { path = "../conveyance-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ciborium.workspace = true
+interprocess.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+ble = ["conveyance-core/ble"]

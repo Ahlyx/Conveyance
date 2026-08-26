@@ -88,6 +88,7 @@ tokio = { version = "=1.53.1", features = [
     "macros",
     "time",
     "sync",
+    "signal",
 ] }
 #
 # Noise sessions. Pattern string is fixed by the spec:
@@ -97,6 +98,9 @@ snow = "=0.10.0"
 # Wire protocol (phase 4): CBOR for message encoding. ciborium is
 # serde-native and handles byte strings + tagged enums cleanly.
 ciborium = "=0.2.2"
+#
+# Local IPC (phase 7): framed CBOR over Unix socket / named pipe.
+interprocess = { version = "=2.4.3", features = ["tokio"] }
 #
 # Pairing ceremony (phase 6): QR rendering, base64url payload envelope,
 # replay-gate bloom filter (fixed-seed variant for restart persistence),
