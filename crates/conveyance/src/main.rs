@@ -29,10 +29,12 @@ enum Command {
     },
 }
 
+#[cfg(feature = "ble")]
 fn data_dir() -> Result<std::path::PathBuf, String> {
     conveyance_core::paths::data_dir().map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "ble")]
 fn hostname_fallback() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
@@ -42,6 +44,7 @@ fn hostname_fallback() -> String {
 /// Load the long-term identity, generating + persisting it on first run.
 /// Generation happens ONLY inside this explicit user-invoked command --
 /// never as a side effect of some other command loading storage.
+#[cfg(feature = "ble")]
 fn load_or_create_identity(
     path: &std::path::Path,
 ) -> Result<conveyance_core::storage::identity::StoredIdentity, String> {
