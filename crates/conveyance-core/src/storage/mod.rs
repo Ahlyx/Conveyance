@@ -28,6 +28,7 @@
 
 pub mod identity;
 pub mod logdb;
+pub mod logdiff;
 pub mod migrate;
 pub mod pairings;
 

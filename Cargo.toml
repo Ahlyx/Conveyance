@@ -117,3 +117,8 @@ btleplug = "=0.12.0"
 uuid = { version = "=1.25.0", features = ["v4"] }
 # StreamExt for btleplug's notification stream (BLE feature only).
 futures-lite = "=2.6.1"
+#
+# CLI integration testing (phase 9): drive the real binary, assert on
+# exit codes/stdout. Test-only, but pinned here with everything else.
+assert_cmd = "=2.1.1"
+predicates = "=3.1.3"

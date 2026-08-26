@@ -336,6 +336,10 @@ struct InFlight {
     /// approval can be bound and the matching ExecuteRequest built from
     /// exactly the bytes that were shown to the user.
     approval: Option<ApprovalRequest>,
+    /// Request coordinates kept for the whole flight so timeout rows
+    /// can carry them (`log query --tool` filters on these).
+    service: Option<String>,
+    endpoint: Option<String>,
     deadline: Instant,
     reply: oneshot::Sender<Result<IpcResponse, OpError>>,
 }
@@ -841,10 +845,16 @@ impl Owner {
             Stage::Approval => self.deps.approval_window,
             Stage::Services | Stage::Execute => self.deps.execute_window,
         };
+        let (service, endpoint) = match &approval {
+            Some(a) => (Some(a.service.clone()), Some(a.endpoint.clone())),
+            None => (None, None),
+        };
         parts.in_flight = Some(InFlight {
             stage,
             req_id,
             approval,
+            service,
+            endpoint,
             deadline: Instant::now() + window,
             reply,
         });
@@ -939,7 +949,12 @@ impl Owner {
                 self.log_req(
                     approval.req_id,
                     "approval_denied",
-                    reason_payload("denied", rsp.reason.clone()),
+                    approval_payload(
+                        "denied",
+                        rsp.reason.clone(),
+                        &approval,
+                        Some(&rsp.signature),
+                    ),
                 );
                 let _ = flight
                     .reply
@@ -953,7 +968,12 @@ impl Owner {
                 self.log_req(
                     approval.req_id,
                     "approval_denied",
-                    reason_payload("expired", rsp.reason.clone()),
+                    approval_payload(
+                        "expired",
+                        rsp.reason.clone(),
+                        &approval,
+                        Some(&rsp.signature),
+                    ),
                 );
                 let _ = flight
                     .reply
@@ -964,7 +984,12 @@ impl Owner {
                 self.log_req(
                     approval.req_id,
                     "approval_granted",
-                    reason_payload("approved", rsp.reason.clone()),
+                    approval_payload(
+                        "approved",
+                        rsp.reason.clone(),
+                        &approval,
+                        Some(&rsp.signature),
+                    ),
                 );
 
                 if parts.binding.record_approval(&approval, rsp).is_err() {
@@ -1004,7 +1029,15 @@ impl Owner {
                     return false;
                 }
 
-                self.log_req(execute.req_id, "execute_sent", serde_json::json!({}));
+                self.log_req(
+                    execute.req_id,
+                    "execute_sent",
+                    serde_json::json!({
+                        "service": approval.service,
+                        "method": approval.method,
+                        "endpoint": approval.endpoint,
+                    }),
+                );
 
                 let bytes = match wire::encode(&wire::WireMessage::ExecuteRequest(execute)) {
                     Ok(b) => b,
@@ -1028,6 +1061,8 @@ impl Owner {
                     stage: Stage::Execute,
                     req_id: flight.req_id,
                     approval: None,
+                    service: Some(approval.service.clone()),
+                    endpoint: Some(approval.endpoint.clone()),
                     deadline: Instant::now() + self.deps.execute_window,
                     reply: flight.reply,
                 });
@@ -1067,6 +1102,11 @@ impl Owner {
         if let Some(code) = rsp.http_status {
             detail["http_status"] = serde_json::Value::from(code);
         }
+        // Embedded response signature: lets `log diff` re-verify this
+        // row offline against the phone's identity key (phase 9).
+        detail["executed_at"] = serde_json::Value::from(rsp.executed_at);
+        detail["signature"] =
+            serde_json::Value::String(conveyance_core::crypto::hex_encode(&rsp.signature));
         self.log_req(rsp.req_id, "execute_result", detail);
 
         let _ = flight.reply.send(Ok(IpcResponse::Body(rsp.body.clone())));
@@ -1094,11 +1134,17 @@ impl Owner {
                 ),
             ),
         };
-        self.log_req(
-            flight.req_id,
-            "request_timeout",
-            serde_json::json!({"reason": crate::recovery::TIMEOUT_REASON, "op": op_kind}),
-        );
+        let mut timeout_payload = serde_json::json!({
+            "reason": crate::recovery::TIMEOUT_REASON,
+            "op": op_kind,
+        });
+        if let Some(service) = &flight.service {
+            timeout_payload["service"] = serde_json::Value::String(service.clone());
+        }
+        if let Some(endpoint) = &flight.endpoint {
+            timeout_payload["endpoint"] = serde_json::Value::String(endpoint.clone());
+        }
+        self.log_req(flight.req_id, "request_timeout", timeout_payload);
         let _ = flight.reply.send(Err(err));
         self.drain_route_queue(parts).await;
     }
@@ -1201,12 +1247,27 @@ pub(crate) fn unix_now() -> i64 {
         .unwrap_or(0)
 }
 
-/// Log payload for a decision row. Mirrors the signature-omission rule:
-/// an absent reason stays absent, never null.
-fn reason_payload(decision: &str, reason: Option<String>) -> serde_json::Value {
-    let mut v = serde_json::json!({ "decision": decision });
+/// Log payload for an approval decision row. Mirrors the signature-
+/// omission rule (absent reason stays absent) and carries the request
+/// coordinates plus the response's Ed25519 signature so `log query
+/// --tool` can filter and `log diff` can re-verify offline.
+fn approval_payload(
+    decision: &str,
+    reason: Option<String>,
+    approval: &ApprovalRequest,
+    signature: Option<&[u8; 64]>,
+) -> serde_json::Value {
+    let mut v = serde_json::json!({
+        "decision": decision,
+        "service": approval.service,
+        "method": approval.method,
+        "endpoint": approval.endpoint,
+    });
     if let Some(r) = reason {
         v["reason"] = serde_json::Value::String(r);
+    }
+    if let Some(sig) = signature {
+        v["signature"] = serde_json::Value::String(conveyance_core::crypto::hex_encode(sig));
     }
     v
 }

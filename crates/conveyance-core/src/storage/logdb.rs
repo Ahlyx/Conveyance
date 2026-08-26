@@ -25,6 +25,33 @@ use crate::crypto::hashchain::{self, ChainIssue, ChainRow, GENESIS_PREV_HASH, Lo
 
 use super::{DbKind, StorageError, migrate::run_migrations, open_connection, recover_mutex};
 
+/// Verdict of the full `log verify` walk. The three variants map
+/// one-to-one onto the spec's exit codes 0 / 1 / 2.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerifyVerdict {
+    /// Chain verified; recorded head (when present) matches. Exit 0.
+    Intact(usize),
+    /// A row was altered, removed, or reordered. Exit 1 -- not
+    /// repairable by definition.
+    ChainBroken(ChainIssue),
+    /// Every row verifies, but the recorded head disagrees with the
+    /// computed one: derived metadata is stale or was tampered with.
+    /// Exit 2 -- repairable via `repair_meta`.
+    MetaStale {
+        recorded_head: String,
+        computed_head: String,
+        rows: usize,
+    },
+}
+
+fn hex_encode_lower(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
 pub struct LogDb {
     conn: Mutex<rusqlite::Connection>,
     path: PathBuf,
@@ -74,6 +101,20 @@ impl LogDb {
             source,
         })?;
 
+        // Derived head metadata rides the SAME transaction as the row:
+        // it can never disagree with entries because of a crash between
+        // them, only through external tampering -- which is exactly what
+        // `verify_with_meta` is here to notice.
+        tx.execute(
+            "INSERT INTO chain_meta (key, value) VALUES ('head_hash', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![hex_encode_lower(&hash)],
+        )
+        .map_err(|source| StorageError::Db {
+            path: self.path.clone(),
+            source,
+        })?;
+
         tx.commit().map_err(|source| StorageError::Db {
             path: self.path.clone(),
             source,
@@ -93,6 +134,85 @@ impl LogDb {
     pub fn verify(&self) -> Result<Result<usize, ChainIssue>, StorageError> {
         let rows = self.read_rows()?;
         Ok(hashchain::verify_chain(&rows))
+    }
+
+    /// Chain walk PLUS the derived-metadata cross-check that gives
+    /// `log verify` its three-state verdict:
+    ///
+    /// * [`VerifyVerdict::Intact`] -- chain verified and recorded head
+    ///   matches (or no metadata exists yet, e.g. pre-migration rows).
+    /// * [`VerifyVerdict::ChainBroken`] -- a row was altered/removed/
+    ///   reordered. Metadata is irrelevant next to this.
+    /// * [`VerifyVerdict::MetaStale`] -- chain itself verifies clean but
+    ///   the recorded head disagrees: external tampering with derived
+    ///   state, or a database written before the metadata existed and
+    ///   appended to since. Repairable by recomputation.
+    pub fn verify_with_meta(&self) -> Result<VerifyVerdict, StorageError> {
+        let rows = self.read_rows()?;
+        match hashchain::verify_chain(&rows) {
+            Err(issue) => return Ok(VerifyVerdict::ChainBroken(issue)),
+            Ok(count) => {
+                let computed = rows
+                    .last()
+                    .map(|r| hex_encode_lower(&r.hash))
+                    .unwrap_or_else(|| hex_encode_lower(&hashchain::GENESIS_PREV_HASH));
+                let recorded = self.read_meta("head_hash")?;
+                match recorded {
+                    None => Ok(VerifyVerdict::Intact(count)),
+                    Some(rec) if rec == computed => Ok(VerifyVerdict::Intact(count)),
+                    Some(rec) => Ok(VerifyVerdict::MetaStale {
+                        recorded_head: rec,
+                        computed_head: computed,
+                        rows: count,
+                    }),
+                }
+            }
+        }
+    }
+
+    /// Rewrite the derived head metadata from a fresh computation.
+    /// Only ever touches `chain_meta`, never entries or hashes. Used by
+    /// `log verify --repair --yes`.
+    pub fn repair_meta(&self) -> Result<(), StorageError> {
+        let rows = self.read_rows()?;
+        // Refusing on a broken chain is deliberate: repairing metadata
+        // over a tampered log would dress exit-1 evidence up as exit-2.
+        hashchain::verify_chain(&rows).map_err(|issue| StorageError::Db {
+            path: self.path.clone(),
+            source: rusqlite::Error::InvalidParameterName(issue.to_string()),
+        })?;
+        let head = rows
+            .last()
+            .map(|r| hex_encode_lower(&r.hash))
+            .unwrap_or_else(|| hex_encode_lower(&hashchain::GENESIS_PREV_HASH));
+        let conn = recover_mutex(self.conn.lock());
+        conn.execute(
+            "INSERT INTO chain_meta (key, value) VALUES ('head_hash', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![head],
+        )
+        .map_err(|source| StorageError::Db {
+            path: self.path.clone(),
+            source,
+        })?;
+        Ok(())
+    }
+
+    fn read_meta(&self, key: &str) -> Result<Option<String>, StorageError> {
+        let conn = recover_mutex(self.conn.lock());
+        conn.query_row(
+            "SELECT value FROM chain_meta WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(StorageError::Db {
+                path: self.path.clone(),
+                source: other,
+            }),
+        })
     }
 
     /// Row count. Test/inspection surface for now; `conveyance status`
@@ -419,5 +539,109 @@ mod tests {
             Err(StorageError::MalformedRow { row_id, .. }) => assert_eq!(row_id, 1),
             other => panic!("expected MalformedRow, got {other:?}"),
         }
+    }
+
+    // ---- chain_meta / verify_with_meta (phase 9) --------------------
+
+    #[test]
+    fn appends_maintain_head_metadata_and_verify_stays_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = LogDb::open(&dir.path().join("e.db")).unwrap();
+        db.append(&event(1)).unwrap();
+        db.append(&event(2)).unwrap();
+
+        match db.verify_with_meta().unwrap() {
+            VerifyVerdict::Intact(n) => assert_eq!(n, 2),
+            other => panic!("expected Intact, got {other:?}"),
+        }
+    }
+
+    /// Pre-metadata databases (created before the phase-9 migration
+    /// shipped rows) must NOT read as stale: absent metadata is
+    /// "unknown", not "disagreeing".
+    #[test]
+    fn missing_metadata_row_reads_as_intact_not_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("e.db");
+        let db = LogDb::open(&path).unwrap();
+        db.append(&event(3)).unwrap();
+        {
+            let conn = LogDb::open(&path).unwrap();
+            let _ = conn; // keep scope obvious
+        }
+        let raw = rusqlite::Connection::open(&path).unwrap();
+        raw.execute("DELETE FROM chain_meta", []).unwrap();
+
+        let db = LogDb::open(&path).unwrap();
+        match db.verify_with_meta().unwrap() {
+            VerifyVerdict::Intact(_) => {}
+            other => panic!("absent meta must be intact, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tampered_head_metadata_is_stale_and_repairable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("e.db");
+        let db = LogDb::open(&path).unwrap();
+        db.append(&event(4)).unwrap();
+        db.append(&event(5)).unwrap();
+        drop(db);
+
+        let raw = rusqlite::Connection::open(&path).unwrap();
+        let n: i64 = raw
+            .query_row("SELECT count(*) FROM chain_meta", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        raw.execute(
+            "UPDATE chain_meta SET value = 'deadbeef' WHERE key = 'head_hash'",
+            [],
+        )
+        .unwrap();
+
+        let db = LogDb::open(&path).unwrap();
+        match db.verify_with_meta().unwrap() {
+            VerifyVerdict::MetaStale { recorded_head, computed_head, .. } => {
+                assert_eq!(recorded_head, "deadbeef");
+                assert_ne!(computed_head, "deadbeef");
+            }
+            other => panic!("expected MetaStale, got {other:?}"),
+        }
+
+        // Repair touches ONLY metadata; entries still verify.
+        db.repair_meta().unwrap();
+        match db.verify_with_meta().unwrap() {
+            VerifyVerdict::Intact(n) => assert_eq!(n, 2),
+            other => panic!("repair must restore Intact, got {other:?}"),
+        }
+    }
+
+    /// A broken chain outranks any metadata question: repair refuses,
+    /// because dressing exit-1 evidence as exit-2 would hide tampering.
+    #[test]
+    fn repair_refuses_on_broken_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("e.db");
+        let db = LogDb::open(&path).unwrap();
+        for n in 6..=8u8 {
+            db.append(&event(n)).unwrap();
+        }
+        drop(db);
+        let raw = rusqlite::Connection::open(&path).unwrap();
+        raw.execute(
+            "UPDATE entries SET payload_json = '{\"evil\":true}' WHERE id = 2",
+            [],
+        )
+        .unwrap();
+
+        let db = LogDb::open(&path).unwrap();
+        match db.verify_with_meta().unwrap() {
+            VerifyVerdict::ChainBroken(_) => {}
+            other => panic!("expected ChainBroken, got {other:?}"),
+        }
+        assert!(
+            db.repair_meta().is_err(),
+            "repair over a broken chain must refuse"
+        );
     }
 }

@@ -26,13 +26,14 @@ pub(crate) enum DbKind {
 
 fn migrations(kind: DbKind) -> &'static [(&'static str, &'static str)] {
     match kind {
-        DbKind::Executions => &[(
-            "entries table + indexes",
-            // Verbatim from the spec's "Logging" section. prev_hash is
-            // NOT NULL here because our genesis is 32 zero bytes --
-            // always representable, unlike auditmcp's nullable-text
-            // sentinel scheme.
-            r#"
+        DbKind::Executions => &[
+            (
+                "entries table + indexes",
+                // Verbatim from the spec's "Logging" section. prev_hash is
+                // NOT NULL here because our genesis is 32 zero bytes --
+                // always representable, unlike auditmcp's nullable-text
+                // sentinel scheme.
+                r#"
                 CREATE TABLE entries (
                   id            INTEGER PRIMARY KEY AUTOINCREMENT,
                   req_id        BLOB NOT NULL,
@@ -45,7 +46,24 @@ fn migrations(kind: DbKind) -> &'static [(&'static str, &'static str)] {
                 CREATE INDEX idx_req_id ON entries(req_id);
                 CREATE INDEX idx_timestamp ON entries(timestamp);
                 "#,
-        )],
+            ),
+            (
+                "chain_meta table",
+                // Derived integrity metadata: the head hash as of the
+                // last append, written INSIDE each append's IMMEDIATE
+                // transaction. `verify` cross-checks it against a fresh
+                // chain walk -- intact chain + disagreeing metadata is
+                // exit code 2 (stale/repairable), distinct from a broken
+                // chain (1). Rows here are derived state; recomputation
+                // from `entries` always repairs them.
+                r#"
+                CREATE TABLE chain_meta (
+                  key   TEXT PRIMARY KEY,
+                  value TEXT NOT NULL
+                );
+                "#,
+            ),
+        ],
         DbKind::Pairings => &[(
             "pairings table",
             r#"
@@ -119,7 +137,7 @@ mod tests {
 
         let mut conn = super::super::open_connection(&path).unwrap();
         run_migrations(&mut conn, DbKind::Executions).unwrap();
-        assert_eq!(user_version(&conn).unwrap(), 1);
+        assert_eq!(user_version(&conn).unwrap(), migrations(DbKind::Executions).len() as i64);
 
         // Objects exist exactly once.
         let tables: i64 = conn
@@ -141,7 +159,7 @@ mod tests {
 
         // Re-running must change nothing and error nowhere.
         run_migrations(&mut conn, DbKind::Executions).unwrap();
-        assert_eq!(user_version(&conn).unwrap(), 1);
+        assert_eq!(user_version(&conn).unwrap(), migrations(DbKind::Executions).len() as i64);
     }
 
     #[test]

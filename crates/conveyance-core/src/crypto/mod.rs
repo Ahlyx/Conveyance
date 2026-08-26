@@ -88,10 +88,12 @@ impl EntropySource for OsEntropy {
     }
 }
 
-/// Lowercase hex. Used for embedding binary identifiers (`req_id`) into
-/// canonical JSON, which has no byte-array type. Matches auditmcp's
-/// convention so log tooling reads the same.
-pub(crate) fn hex_encode(bytes: &[u8]) -> String {
+/// Lowercase hex. Used for embedding binary identifiers (`req_id`,
+/// signatures, hashes) into canonical JSON, which has no byte-array
+/// type. Public since phase 9: the daemon's log enrichment embeds
+/// response signatures in payloads using the same encoding as the
+/// hash chain -- one hex convention everywhere.
+pub fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for &b in bytes {
