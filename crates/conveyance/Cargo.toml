@@ -12,9 +12,13 @@ path = "src/main.rs"
 [dependencies]
 conveyance-core = { path = "../conveyance-core" }
 conveyance-daemon = { path = "../conveyance-daemon" }
+conveyance-shim = { path = "../conveyance-shim" }
 clap.workspace = true
 tokio.workspace = true
 
 [features]
 # Real BLE for `pair`. Default OFF (see core); release builds enable it.
 ble = ["conveyance-core/ble"]
+# Forwards the daemon's scripted-phone mode for E2E testing; also off
+# in every production build.
+mock-phone = ["conveyance-daemon/mock-phone"]

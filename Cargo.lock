@@ -663,6 +663,7 @@ dependencies = [
  "clap",
  "conveyance-core",
  "conveyance-daemon",
+ "conveyance-shim",
  "tokio",
 ]
 
@@ -717,6 +718,11 @@ name = "conveyance-shim"
 version = "0.1.0"
 dependencies = [
  "conveyance-core",
+ "conveyance-daemon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

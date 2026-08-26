@@ -17,9 +17,13 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 }
-
 #[derive(Subcommand)]
 enum Command {
+    /// Generate the long-term identity if none exists (first-run step).
+    Init {
+        #[command(subcommand)]
+        cmd: Init,
+    },
     /// Start pairing: render a QR for the phone to scan, wait for the
     /// ceremony to complete.
     Pair {
@@ -37,6 +41,15 @@ enum Command {
         /// commands via --socket).
         #[arg(long)]
         socket: Option<String>,
+        /// Redirect all daemon storage (identity, databases) under
+        /// this directory instead of the platform data dir.
+        #[arg(long)]
+        data_dir: Option<std::path::PathBuf>,
+        /// E2E test mode: scripted auto-approving phone instead of
+        /// BLE. Requires a build with the mock-phone feature; refuses
+        /// to start otherwise (never silently).
+        #[arg(long)]
+        mock_phone: bool,
     },
     /// Ask a running daemon for its status view.
     Status {
@@ -48,6 +61,13 @@ enum Command {
     Session {
         #[command(subcommand)]
         cmd: SessionCommand,
+    },
+    /// Run the MCP shim over stdio for an external client (Claude
+    /// Code, mcp-inspector). Exits when stdin closes.
+    McpShim {
+        /// Socket identity of the daemon (see `conveyance daemon`).
+        #[arg(long)]
+        socket: Option<String>,
     },
 }
 
@@ -65,12 +85,24 @@ enum SessionCommand {
     },
 }
 
-#[cfg(feature = "ble")]
+/// Create the long-term identity if none exists. Generation happens
+/// ONLY inside this explicit user-invoked command -- never as a side
+/// effect of some other command loading storage.
+#[derive(Subcommand)]
+enum Init {
+    /// Generate the PC identity (no-op when one already exists).
+    Identity {
+        /// Redirect storage under this directory instead of the
+        /// platform data dir (must match the daemon's --data-dir).
+        #[arg(long)]
+        data_dir: Option<std::path::PathBuf>,
+    },
+}
+
 fn data_dir() -> Result<std::path::PathBuf, String> {
     conveyance_core::paths::data_dir().map_err(|e| e.to_string())
 }
 
-#[cfg(feature = "ble")]
 fn hostname_fallback() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
@@ -80,7 +112,6 @@ fn hostname_fallback() -> String {
 /// Load the long-term identity, generating + persisting it on first run.
 /// Generation happens ONLY inside this explicit user-invoked command --
 /// never as a side effect of some other command loading storage.
-#[cfg(feature = "ble")]
 fn load_or_create_identity(
     path: &std::path::Path,
 ) -> Result<conveyance_core::storage::identity::StoredIdentity, String> {
@@ -107,8 +138,16 @@ fn load_or_create_identity(
 impl Command {
     async fn run(self) -> Result<(), String> {
         match self {
+            Command::Init { cmd } => match cmd {
+                Init::Identity { data_dir } => init_identity(data_dir),
+            },
             Command::Pair { name } => pair(name).await,
-            Command::Daemon { config, socket } => daemon(config, socket).await,
+            Command::Daemon {
+                config,
+                socket,
+                data_dir,
+                mock_phone,
+            } => daemon(config, socket, data_dir, mock_phone).await,
             Command::Status { socket } => status(client_socket(socket)?).await,
             Command::Session { cmd } => match cmd {
                 SessionCommand::Start { socket } => {
@@ -128,6 +167,10 @@ impl Command {
                     .await
                 }
             },
+            Command::McpShim { socket } => {
+                let sock = client_socket(socket)?;
+                conveyance_shim::run(&sock).await
+            }
         }
     }
 }
@@ -140,6 +183,17 @@ fn client_socket(flag: Option<String>) -> Result<String, String> {
     }
     let raw = conveyance_daemon::load_config_or_defaults()?;
     Ok(conveyance_daemon::effective_socket(&raw))
+}
+
+fn init_identity(data_dir_override: Option<std::path::PathBuf>) -> Result<(), String> {
+    let dir = match data_dir_override {
+        Some(d) => d,
+        None => data_dir()?,
+    };
+    let path = dir.join("identity.enc");
+    // load_or_create_identity prints generation progress itself.
+    let _identity = load_or_create_identity(&path)?;
+    Ok(())
 }
 
 fn load_daemon_config(
@@ -156,14 +210,48 @@ fn load_daemon_config(
 async fn daemon(
     config_path: Option<std::path::PathBuf>,
     socket: Option<String>,
+    data_dir: Option<std::path::PathBuf>,
+    mock_phone: bool,
 ) -> Result<(), String> {
     let mut config = load_daemon_config(config_path)?;
     if let Some(s) = socket {
         config.socket = s;
     }
-    conveyance_daemon::run(config)
-        .await
-        .map_err(|e| e.to_string())
+    // Storage redirection happens AFTER resolution so every derived
+    // path moves together -- a daemon must never straddle two data
+    // directories.
+    if let Some(dir) = data_dir {
+        config.pairings_db = dir.join("pairings.db");
+        config.executions_db = dir.join("executions.db");
+        config.identity_file = dir.join("identity.enc");
+    }
+
+    match (mock_phone, cfg!(feature = "mock-phone")) {
+        (false, _) => conveyance_daemon::run(config)
+            .await
+            .map_err(|e| e.to_string()),
+        // Test mode requested and compiled in: the only caller is E2E
+        // tooling, never production muscle memory.
+        (true, true) => {
+            #[cfg(feature = "mock-phone")]
+            {
+                conveyance_daemon::run_with_mock_phone(config)
+                    .await
+                    .map_err(|e| e.to_string())
+            }
+            // The cfg!() above is compile-time constant false here, but
+            // both match arms must still typecheck.
+            #[cfg(not(feature = "mock-phone"))]
+            {
+                Err("mock-phone feature not compiled".to_string())
+            }
+        }
+        // Refuse loudly rather than silently ignoring the flag --
+        // pretending to run test mode would be worse than refusing.
+        (true, false) => Err("this build lacks mock-phone support; rebuild with:\n  \
+             cargo build --release --features conveyance-daemon/mock-phone"
+            .to_string()),
+    }
 }
 
 async fn status(socket: String) -> Result<(), String> {

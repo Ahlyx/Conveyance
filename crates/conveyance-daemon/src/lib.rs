@@ -11,6 +11,8 @@
 //! the messages a user sees when the daemon exits nonzero.
 
 pub mod ipc;
+#[cfg(feature = "mock-phone")]
+pub mod mockphone;
 pub mod phone;
 pub mod recovery;
 pub mod server;
@@ -424,6 +426,45 @@ pub async fn run_with(config: DaemonConfig, deps: DaemonDeps) -> Result<(), Star
     }
 
     let state = assemble_state(&config, stores, deps);
+    server::serve_until_signal(config, state).await
+}
+
+/// End-to-end test mode: serve with a scripted auto-approving phone
+/// instead of BLE. Requires the `mock-phone` feature AND is reachable
+/// only through the explicit --mock-phone flag; production binaries
+/// carry neither.
+#[cfg(feature = "mock-phone")]
+pub async fn run_with_mock_phone(config: DaemonConfig) -> Result<(), StartupError> {
+    use conveyance_core::crypto::dh::DhSecret;
+
+    let stores = refuse_to_start(&config)?;
+
+    let swept = recovery::sweep_orphaned_requests(&stores.log).map_err(|e| StartupError::Open {
+        what: "executions database (recovery sweep)".to_string(),
+        message: e.to_string(),
+    })?;
+    if swept > 0 {
+        eprintln!("conveyance daemon: marked {swept} orphaned request(s) as request_timeout");
+    }
+
+    // The mock phone needs the PC's DH static for KK -- exactly what a
+    // real phone learns during pairing.
+    let pc_dh_pub = DhSecret::from_bytes(*stores.identity.x25519_secret.expose())
+        .public_key()
+        .to_bytes();
+    let phone = std::sync::Arc::new(mockphone::MockPhone::new(pc_dh_pub));
+    phone
+        .record_pairing(&stores.store)
+        .map_err(|e| StartupError::Open {
+            what: "pairings database (mock pairing)".to_string(),
+            message: e.to_string(),
+        })?;
+    eprintln!(
+        "conveyance daemon: TEST MODE -- scripted phone paired ({})",
+        phone.phone_id()
+    );
+
+    let state = assemble_state(&config, stores, DaemonDeps::new(Box::new(phone.dialer())));
     server::serve_until_signal(config, state).await
 }
 

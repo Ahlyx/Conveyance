@@ -26,3 +26,7 @@ interprocess.workspace = true
 tempfile.workspace = true
 [features]
 ble = ["conveyance-core/ble"]
+# Scripted phone for end-to-end MCP client verification without radio
+# hardware. Off in every production build; activated only by explicit
+# test tooling.
+mock-phone = []
