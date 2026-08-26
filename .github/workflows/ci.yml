@@ -19,7 +19,7 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # dtolnay/rust-toolchain@stable installs current stable on every
       # runner, which is what keeps edition-2024 builds working uniformly;
       # a runner's preinstalled toolchain can lag behind.
@@ -40,7 +40,7 @@ jobs:
         # particular is CI-only until phase 11 says otherwise.
         os: [windows-latest, ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # --locked: CI tests exactly what the committed Cargo.lock resolved,
