@@ -492,46 +492,14 @@ pub(crate) mod test_support {
     use conveyance_core::wire::message::{
         ApprovalResponse, Decision, ExecuteResponse, ListServicesResponse, Status,
     };
-    use std::collections::HashMap;
     use std::future::Future;
     use std::sync::Mutex as StdMutex;
     use tokio::sync::mpsc;
     use tokio::sync::watch;
 
-    /// In-memory stand-in for the OS keychain. `fail` simulates the
-    /// whole credential service being down (distinct from absent).
-    pub(crate) struct MockKeyProvider {
-        entries: StdMutex<HashMap<String, Vec<u8>>>,
-        pub fail: bool,
-    }
-
-    impl MockKeyProvider {
-        pub(crate) fn new() -> Self {
-            Self {
-                entries: StdMutex::new(HashMap::new()),
-                fail: false,
-            }
-        }
-    }
-
-    impl KeyProvider for MockKeyProvider {
-        fn get(&self, account: &str) -> Result<Option<Vec<u8>>, StorageError> {
-            if self.fail {
-                return Err(StorageError::KeychainUnavailable("mock: down".into()));
-            }
-            Ok(self.entries.lock().unwrap().get(account).cloned())
-        }
-        fn set(&self, account: &str, value: &[u8]) -> Result<(), StorageError> {
-            if self.fail {
-                return Err(StorageError::KeychainUnavailable("mock: down".into()));
-            }
-            self.entries
-                .lock()
-                .unwrap()
-                .insert(account.to_string(), value.to_vec());
-            Ok(())
-        }
-    }
+    /// The in-memory keychain stub lives in conveyance-core so it is not
+    /// re-implemented per crate (see conveyance_core::test_support).
+    pub(crate) use conveyance_core::test_support::MockKeyProvider;
 
     /// Produces a fresh cross-wired transport pair on every dial: the
     /// daemon gets one half, the phone-harness task the other. Fresh

@@ -250,67 +250,11 @@ impl StoredIdentity {
 }
 
 #[cfg(test)]
-pub(crate) mod test_support {
-    use super::*;
-    use std::sync::Mutex;
-
-    /// In-memory stand-in for the OS keychain. `fail` simulates the whole
-    /// service being down (distinct from an absent entry).
-    pub(crate) struct MockKeyProvider {
-        entries: Mutex<std::collections::HashMap<String, Vec<u8>>>,
-        pub fail_all: bool,
-    }
-
-    impl MockKeyProvider {
-        pub fn new() -> Self {
-            Self {
-                entries: Mutex::new(std::collections::HashMap::new()),
-                fail_all: false,
-            }
-        }
-
-        pub fn remove(&self, account: &str) {
-            self.entries.lock().unwrap().remove(account);
-        }
-    }
-
-    impl Default for MockKeyProvider {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
-    impl KeyProvider for MockKeyProvider {
-        fn get(&self, account: &str) -> Result<Option<Vec<u8>>, StorageError> {
-            if self.fail_all {
-                return Err(StorageError::KeychainUnavailable(
-                    "mock: service down".into(),
-                ));
-            }
-            Ok(self.entries.lock().unwrap().get(account).cloned())
-        }
-
-        fn set(&self, account: &str, value: &[u8]) -> Result<(), StorageError> {
-            if self.fail_all {
-                return Err(StorageError::KeychainUnavailable(
-                    "mock: service down".into(),
-                ));
-            }
-            self.entries
-                .lock()
-                .unwrap()
-                .insert(account.to_string(), value.to_vec());
-            Ok(())
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::crypto::OsEntropy;
     use crate::crypto::test_support::{CounterEntropy, FailingEntropy};
-    use test_support::MockKeyProvider;
+    use crate::test_support::MockKeyProvider;
 
     fn fresh(dir: &tempfile::TempDir) -> (PathBuf, MockKeyProvider, StoredIdentity) {
         let keys = MockKeyProvider::new();
@@ -378,7 +322,7 @@ mod tests {
         // Dead at save time: nothing is written, error carries the spec code.
         let dir = tempfile::tempdir().unwrap();
         let (path, mut keys, identity) = fresh(&dir);
-        keys.fail_all = true;
+        keys.fail = true;
 
         match identity.save(&path, &keys, &CounterEntropy) {
             Err(e @ StorageError::KeychainUnavailable(_)) => {
@@ -389,9 +333,9 @@ mod tests {
         assert!(!path.exists(), "failed save must not leave a partial file");
 
         // Dead only at load time: file exists, keychain check fails first.
-        keys.fail_all = false;
+        keys.fail = false;
         identity.save(&path, &keys, &CounterEntropy).unwrap();
-        keys.fail_all = true;
+        keys.fail = true;
 
         match StoredIdentity::load(&path, &keys) {
             Err(StorageError::KeychainUnavailable(_)) => {}

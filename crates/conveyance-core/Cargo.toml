@@ -38,6 +38,11 @@ futures-lite = { workspace = true, optional = true }
 # UniFFI build of this crate does not drag a BLE central implementation
 # onto the phone. The daemon crate opts in.
 ble = ["dep:btleplug", "dep:uuid", "dep:futures-lite"]
+# Exposes `conveyance_core::test_support` (the in-memory keychain stub)
+# to dependent crates' test suites. `#[cfg(test)]` items do not cross
+# crate boundaries; without this the daemon and shim would each
+# re-implement the same double.
+test-support = []
 
 [dev-dependencies]
 tempfile.workspace = true

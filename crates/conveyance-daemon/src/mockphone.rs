@@ -19,11 +19,10 @@
 //! verification can assert against the phone side of the story just
 //! like the real approvals.db would allow after phase 10.
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use conveyance_core::crypto::dh::DhSecret;
@@ -31,7 +30,6 @@ use conveyance_core::crypto::sign::IdentitySecretKey;
 use conveyance_core::crypto::{OsEntropy, Secret};
 use conveyance_core::session::{PeerIdentity, Role, Session as CoreSession, SessionHandshake};
 use conveyance_core::storage::StorageError;
-use conveyance_core::storage::identity::KeyProvider;
 use conveyance_core::storage::pairings::PairingsDb;
 use conveyance_core::time::unix_now;
 use conveyance_core::transport::mock::{MockLink, MockTransport};
@@ -43,34 +41,10 @@ use conveyance_core::wire::message::{
 
 use crate::phone::{PhoneDialer, PhoneLink};
 
-/// In-memory stand-in for the OS keychain (same shape as core's test
-/// provider; duplicated here because cfg(test) items are invisible to
-/// dependent crates and E2E runs use real binaries).
-pub struct MockKeyProvider {
-    entries: StdMutex<HashMap<String, Vec<u8>>>,
-}
-
-impl Default for MockKeyProvider {
-    fn default() -> Self {
-        Self {
-            entries: StdMutex::new(HashMap::new()),
-        }
-    }
-}
-
-impl KeyProvider for MockKeyProvider {
-    fn get(&self, account: &str) -> Result<Option<Vec<u8>>, StorageError> {
-        Ok(self.entries.lock().unwrap().get(account).cloned())
-    }
-
-    fn set(&self, account: &str, value: &[u8]) -> Result<(), StorageError> {
-        self.entries
-            .lock()
-            .unwrap()
-            .insert(account.to_string(), value.to_vec());
-        Ok(())
-    }
-}
+/// The in-memory keychain stub, re-exported so E2E tooling that only
+/// depends on this module keeps one import. The implementation lives in
+/// `conveyance_core::test_support`.
+pub use conveyance_core::test_support::MockKeyProvider;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

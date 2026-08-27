@@ -25,3 +25,8 @@ pub mod storage;
 pub mod time;
 pub mod transport;
 pub mod wire;
+
+/// Shared test doubles. Available to this crate's own tests and, via the
+/// `test-support` feature, to the daemon and shim test suites.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;

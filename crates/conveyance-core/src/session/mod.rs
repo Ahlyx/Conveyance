@@ -285,7 +285,7 @@ mod tests {
     use crate::crypto::dh::DhSecret;
     use crate::crypto::test_support::CounterEntropy;
     use crate::storage::identity::StoredIdentity;
-    use crate::storage::identity::test_support::MockKeyProvider;
+    use crate::test_support::MockKeyProvider;
 
     fn long_params() -> SessionParams {
         SessionParams::raw(

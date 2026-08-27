@@ -24,9 +24,14 @@ interprocess.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Re-declared here with the test-support feature so the daemon's unit
+# tests get conveyance_core::test_support (shared keychain stub).
+conveyance-core = { path = "../conveyance-core", features = ["test-support"] }
+
 [features]
 ble = ["conveyance-core/ble"]
 # Scripted phone for end-to-end MCP client verification without radio
 # hardware. Off in every production build; activated only by explicit
-# test tooling.
-mock-phone = []
+# test tooling. Pulls the core test-support feature so the mockphone
+# module can re-export the shared keychain stub.
+mock-phone = ["conveyance-core/test-support"]
