@@ -112,9 +112,14 @@ pub fn hex_decode(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
     }
-    let mut out = Vec::with_capacity(s.len() / 2);
-    for pair in s.as_bytes().chunks_exact(2) {
-        out.push((from_lower_hex_digit(pair[0])? << 4) | from_lower_hex_digit(pair[1])?);
+    // `as_chunks` (not `chunks_exact`) so the [u8; 2] shape is known to
+    // the compiler and the trailing remainder -- empty, given the length
+    // check above -- is explicit.
+    let (pairs, rest) = s.as_bytes().as_chunks::<2>();
+    debug_assert!(rest.is_empty());
+    let mut out = Vec::with_capacity(pairs.len());
+    for &[hi, lo] in pairs {
+        out.push((from_lower_hex_digit(hi)? << 4) | from_lower_hex_digit(lo)?);
     }
     Some(out)
 }
