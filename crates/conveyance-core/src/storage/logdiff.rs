@@ -39,6 +39,7 @@ use serde::Deserialize;
 
 use crate::crypto::canonical_json::canonicalize;
 use crate::crypto::sign::{IdentityPublicKey, IdentitySecretKey};
+use crate::crypto::{hex_decode_array, hex_encode};
 
 /// Context tag prepended to every signed phone-log row.
 pub const PHONE_LOG_CONTEXT: &[u8] = b"conveyance-phone-log-v1";
@@ -88,38 +89,6 @@ impl RawPhoneRow {
     }
 }
 
-fn hex_to_fixed<const N: usize>(s: &str) -> Option<[u8; N]> {
-    if !s.len().is_multiple_of(2) || s.len() != N * 2 {
-        return None;
-    }
-    // Lowercase hex only: exports are byte-stable artifacts, and
-    // accepting mixed case here would make two renders of one row
-    // compare unequal everywhere else.
-    let mut out = [0u8; N];
-    for (i, byte) in s.as_bytes().chunks(2).enumerate() {
-        let hi = match byte[0] {
-            c @ b'0'..=b'9' => c - b'0',
-            c @ b'a'..=b'f' => c - b'a' + 10,
-            _ => return None,
-        };
-        let lo = match byte[1] {
-            c @ b'0'..=b'9' => c - b'0',
-            c @ b'a'..=b'f' => c - b'a' + 10,
-            _ => return None,
-        };
-        out[i] = (hi << 4) | lo;
-    }
-    Some(out)
-}
-
-fn lower_hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
-}
-
 /// What [`parse_phone_export`] rejects, with the 1-based line number --
 /// a diff tool that skips bad rows silently would produce a
 /// reconciliation report that looks complete but isn't.
@@ -152,13 +121,13 @@ pub fn parse_phone_export(text: &str) -> Result<Vec<PhoneLogRow>, ExportParseErr
         })?;
         let raw = RawPhoneRow::from_de(raw);
 
-        let req_id = hex_to_fixed::<16>(&raw.req_id).ok_or_else(|| ExportParseError {
+        let req_id = hex_decode_array::<16>(&raw.req_id).ok_or_else(|| ExportParseError {
             line: line_no,
             reason: "req_id must be 32 lowercase hex chars".into(),
         })?;
         // Signatures arrive hex-encoded in JSON (no byte-array type);
         // uppercase is rejected so exports are byte-stable artifacts.
-        let signature = hex_to_fixed::<64>(&raw.signature).ok_or_else(|| ExportParseError {
+        let signature = hex_decode_array::<64>(&raw.signature).ok_or_else(|| ExportParseError {
             line: line_no,
             reason: "signature must be 128 hex chars".into(),
         })?;
@@ -184,7 +153,7 @@ pub fn parse_phone_export(text: &str) -> Result<Vec<PhoneLogRow>, ExportParseErr
 /// `"conveyance-phone-log-v1" || canonical_json(minus signature)`.
 fn phone_row_signing_payload(row: &PhoneLogRow) -> Result<Vec<u8>, String> {
     let value = serde_json::json!({
-        "req_id": lower_hex(&row.req_id),
+        "req_id": hex_encode(&row.req_id),
         "event_type": row.event_type,
         "payload_json": row.payload_json,
         "timestamp": row.timestamp,
@@ -237,11 +206,11 @@ pub fn render_phone_export(rows: &[PhoneLogRow]) -> String {
     let mut out = String::new();
     for r in rows {
         let line = serde_json::json!({
-            "req_id": lower_hex(&r.req_id),
+            "req_id": hex_encode(&r.req_id),
             "event_type": r.event_type,
             "payload_json": r.payload_json,
             "timestamp": r.timestamp,
-            "signature": lower_hex(&r.signature),
+            "signature": hex_encode(&r.signature),
         });
         out.push_str(&line.to_string());
         out.push('\n');
@@ -388,7 +357,7 @@ pub fn diff_logs(
         let Some(sig_hex) = payload.get("signature").and_then(|s| s.as_str()) else {
             continue; // pre-phase-9 row: unverifiable, not untrusted
         };
-        let Some(sig) = hex_to_fixed::<64>(sig_hex) else {
+        let Some(sig) = hex_decode_array::<64>(sig_hex) else {
             report.signature_failures.push(SigFailure {
                 side: SigSide::Pc,
                 req_id: ev.req_id,
@@ -404,7 +373,7 @@ pub fn diff_logs(
             obj.remove("signature");
         }
         let mut signing_view = serde_json::json!({
-            "req_id": lower_hex(&ev.req_id),
+            "req_id": hex_encode(&ev.req_id),
             "status": unsigned.get("status").cloned().unwrap_or(serde_json::Value::Null),
             "http_status": unsigned.get("http_status").cloned().unwrap_or(serde_json::Value::Null),
             "body": unsigned.get("body").cloned().unwrap_or(serde_json::Value::Null),
@@ -563,8 +532,8 @@ mod tests {
         // the JSON itself parses and the hex rule is what fires.
         let line = render_phone_export(std::slice::from_ref(&good));
         let uppered = line.replace(
-            &lower_hex(&[0xAB; 64]),
-            &lower_hex(&[0xAB; 64]).to_uppercase(),
+            &hex_encode(&[0xAB; 64]),
+            &hex_encode(&[0xAB; 64]).to_uppercase(),
         );
         let err = parse_phone_export(&uppered).unwrap_err();
         assert!(
@@ -574,7 +543,7 @@ mod tests {
 
         // Wrong-length hex likewise.
         let short = render_phone_export(std::slice::from_ref(&good))
-            .replace(&lower_hex(&good.req_id), &format!("{:016x}", 1u128));
+            .replace(&hex_encode(&good.req_id), &format!("{:016x}", 1u128));
         let err = parse_phone_export(&short).unwrap_err();
         assert!(err.reason.contains("32 lowercase hex"), "{err}");
 
@@ -732,7 +701,7 @@ mod tests {
         .unwrap()
         .sign(&phone_key);
 
-        let sig_hex = lower_hex(&resp.signature);
+        let sig_hex = hex_encode(&resp.signature);
         let payload = serde_json::json!({
             "status": "ok",
             "http_status": 200,

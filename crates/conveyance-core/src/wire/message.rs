@@ -11,6 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::ProtocolError;
 use crate::crypto::canonical_json::canonicalize;
 use crate::crypto::sign::{IdentityPublicKey, IdentitySecretKey};
+use crate::crypto::{hex_decode, hex_encode};
 
 // ---------------------------------------------------------------------------
 // ReqId
@@ -35,11 +36,7 @@ impl ReqId {
     }
 
     pub fn hex(&self) -> String {
-        let mut s = String::with_capacity(32);
-        for b in self.0 {
-            s.push_str(&format!("{b:02x}"));
-        }
-        s
+        hex_encode(&self.0)
     }
 }
 
@@ -78,18 +75,6 @@ impl<'de> Deserialize<'de> for ReqId {
         }
         deserializer.deserialize_any(Visitor)
     }
-}
-
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    Some(
-        (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("validated above"))
-            .collect(),
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -427,11 +412,7 @@ pub(crate) mod signature_serde {
 
     pub fn serialize<S: Serializer>(sig: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
         if s.is_human_readable() {
-            let mut strg = String::with_capacity(128);
-            for b in sig {
-                strg.push_str(&format!("{b:02x}"));
-            }
-            s.serialize_str(&strg)
+            s.serialize_str(&hex_encode(sig))
         } else {
             s.serialize_bytes(sig)
         }
@@ -445,11 +426,7 @@ pub(crate) mod signature_serde {
                 write!(f, "a 64-byte Ed25519 signature (hex or raw)")
             }
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<[u8; 64], E> {
-                let raw: Vec<u8> = (0..v.len())
-                    .step_by(2)
-                    .map(|i| u8::from_str_radix(&v[i..i + 2], 16))
-                    .collect::<Result<_, _>>()
-                    .map_err(|_| E::custom("signature hex malformed"))?;
+                let raw = hex_decode(v).ok_or_else(|| E::custom("signature hex malformed"))?;
                 <[u8; 64]>::try_from(raw).map_err(|_| E::custom("signature must be 64 bytes"))
             }
             fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<[u8; 64], E> {

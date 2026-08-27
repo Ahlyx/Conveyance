@@ -22,7 +22,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{EntropySource, Secret, aead, hkdf::hkdf_blake2s, sign::IdentitySecretKey};
+use crate::crypto::{
+    EntropySource, Secret, aead, hex_decode, hex_decode_array, hex_encode, hkdf::hkdf_blake2s,
+    sign::IdentitySecretKey,
+};
 
 use super::{KEYCHAIN_SERVICE, StorageError};
 
@@ -55,7 +58,7 @@ impl KeyProvider for OsKeyring {
         let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account)
             .map_err(|e| StorageError::KeychainUnavailable(e.to_string()))?;
         match entry.get_password() {
-            Ok(hex_str) => decode_hex(&hex_str)
+            Ok(hex_str) => hex_decode(&hex_str)
                 .ok_or_else(|| {
                     StorageError::KeychainUnavailable(format!(
                         "entry '{account}' holds non-hex data"
@@ -71,27 +74,9 @@ impl KeyProvider for OsKeyring {
         let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account)
             .map_err(|e| StorageError::KeychainUnavailable(e.to_string()))?;
         entry
-            .set_password(&encode_hex(value))
+            .set_password(&hex_encode(value))
             .map_err(|e| StorageError::KeychainUnavailable(e.to_string()))
     }
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
-}
-
-fn decode_hex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
-        .collect()
 }
 
 /// Both halves of the PC's long-term identity.
@@ -246,8 +231,7 @@ impl SerializedIdentity {
             });
         }
         let parse32 = |hex: &str| -> Result<[u8; 32], StorageError> {
-            decode_hex(hex)
-                .and_then(|v| <[u8; 32]>::try_from(v).ok())
+            hex_decode_array::<32>(hex)
                 .ok_or_else(|| StorageError::IdentityFileCorrupt(path.to_path_buf()))
         };
         Ok(StoredIdentity {
@@ -255,14 +239,6 @@ impl SerializedIdentity {
             x25519_secret: Secret::from_bytes(parse32(&self.x25519_secret)?),
         })
     }
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 // Convenience so callers can go from stored bytes to a usable signing

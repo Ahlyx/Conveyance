@@ -22,6 +22,7 @@ use std::sync::Mutex;
 use rusqlite::params;
 
 use crate::crypto::hashchain::{self, ChainIssue, ChainRow, GENESIS_PREV_HASH, LogEvent};
+use crate::crypto::hex_encode;
 
 use super::{DbKind, StorageError, migrate::run_migrations, open_connection, recover_mutex};
 
@@ -42,14 +43,6 @@ pub enum VerifyVerdict {
         computed_head: String,
         rows: usize,
     },
-}
-
-fn hex_encode_lower(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 pub struct LogDb {
@@ -108,7 +101,7 @@ impl LogDb {
         tx.execute(
             "INSERT INTO chain_meta (key, value) VALUES ('head_hash', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![hex_encode_lower(&hash)],
+            params![hex_encode(&hash)],
         )
         .map_err(|source| StorageError::Db {
             path: self.path.clone(),
@@ -155,8 +148,8 @@ impl LogDb {
         let count = rows.len();
         let computed = rows
             .last()
-            .map(|r| hex_encode_lower(&r.hash))
-            .unwrap_or_else(|| hex_encode_lower(&hashchain::GENESIS_PREV_HASH));
+            .map(|r| hex_encode(&r.hash))
+            .unwrap_or_else(|| hex_encode(&hashchain::GENESIS_PREV_HASH));
         match self.read_meta("head_hash")? {
             None => Ok(VerifyVerdict::Intact(count)),
             Some(rec) if rec == computed => Ok(VerifyVerdict::Intact(count)),
@@ -181,8 +174,8 @@ impl LogDb {
         })?;
         let head = rows
             .last()
-            .map(|r| hex_encode_lower(&r.hash))
-            .unwrap_or_else(|| hex_encode_lower(&hashchain::GENESIS_PREV_HASH));
+            .map(|r| hex_encode(&r.hash))
+            .unwrap_or_else(|| hex_encode(&hashchain::GENESIS_PREV_HASH));
         let conn = recover_mutex(self.conn.lock());
         conn.execute(
             "INSERT INTO chain_meta (key, value) VALUES ('head_hash', ?1)

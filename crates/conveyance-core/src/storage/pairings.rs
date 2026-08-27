@@ -15,6 +15,8 @@ use std::sync::Mutex;
 use rusqlite::params;
 use sha2::{Digest, Sha256};
 
+use crate::crypto::hex_encode;
+
 use super::{DbKind, StorageError, migrate::run_migrations, open_connection, recover_mutex};
 
 /// Derive the user-facing phone handle from the phone's Ed25519 public
@@ -29,12 +31,8 @@ use super::{DbKind, StorageError, migrate::run_migrations, open_connection, reco
 /// label, generate a random one at pairing time instead of reaching for
 /// this value.
 pub fn phone_id_for(id_pub: &[u8; 32]) -> String {
-    let digest = Sha256::digest(id_pub);
-    let mut out = String::with_capacity(16);
-    for b in digest.iter().take(8) {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
+    // First 8 bytes of the digest -> 16 lowercase hex chars.
+    hex_encode(&Sha256::digest(id_pub)[..8])
 }
 
 /// One paired-phone record.

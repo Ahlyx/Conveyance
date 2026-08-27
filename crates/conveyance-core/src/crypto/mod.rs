@@ -103,6 +103,39 @@ pub fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Inverse of [`hex_encode`]. Rejects odd length and any character
+/// outside `[0-9a-f]` -- uppercase included, unlike `u8::from_str_radix`.
+/// Conveyance's hashed and signed content is lowercase-hex by spec, so
+/// tolerating mixed case here would let two renders of one value compare
+/// unequal downstream (in the log diff especially).
+pub fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    for pair in s.as_bytes().chunks_exact(2) {
+        out.push((from_lower_hex_digit(pair[0])? << 4) | from_lower_hex_digit(pair[1])?);
+    }
+    Some(out)
+}
+
+/// Fixed-width [`hex_decode`]: additionally rejects any string whose
+/// length is not exactly `2 * N`.
+pub fn hex_decode_array<const N: usize>(s: &str) -> Option<[u8; N]> {
+    if s.len() != N * 2 {
+        return None;
+    }
+    hex_decode(s)?.try_into().ok()
+}
+
+fn from_lower_hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    }
+}
+
 /// A fixed-size secret byte array that zeroizes on drop and refuses to
 /// print itself. All raw key storage inside this module goes through
 /// this (or a crate type that already zeroizes) so a dropped key does
@@ -194,6 +227,34 @@ mod tests {
     fn hex_encode_is_lowercase_and_padded() {
         assert_eq!(hex_encode(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
         assert_eq!(hex_encode(&[]), "");
+    }
+
+    #[test]
+    fn hex_decode_round_trips_and_rejects_malformed() {
+        for bytes in [
+            &b""[..],
+            &[0x00][..],
+            &[0x0f, 0xa0, 0xff][..],
+            &[0x5a; 64][..],
+        ] {
+            assert_eq!(hex_decode(&hex_encode(bytes)).as_deref(), Some(bytes));
+        }
+        // Odd length, non-hex characters, and uppercase are all refused.
+        assert_eq!(hex_decode("abc"), None);
+        assert_eq!(hex_decode("zz"), None);
+        assert_eq!(hex_decode("00FF"), None);
+        assert_eq!(hex_decode("00 ff"), None);
+    }
+
+    #[test]
+    fn hex_decode_array_enforces_exact_width() {
+        assert_eq!(hex_decode_array::<2>("00ff"), Some([0x00, 0xff]));
+        assert_eq!(hex_decode_array::<2>("00"), None);
+        assert_eq!(hex_decode_array::<2>("00ff00"), None);
+        assert_eq!(
+            hex_decode_array::<32>(&hex_encode(&[7u8; 32])),
+            Some([7u8; 32])
+        );
     }
 
     #[test]
