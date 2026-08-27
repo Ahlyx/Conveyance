@@ -330,8 +330,12 @@ pub struct DiffPaths {
 }
 
 pub fn diff(phone_export: &Path, paths: DiffPaths) -> Result<(), CliError> {
-    // Unsigned/malformed phone entries refuse the whole run BEFORE any
-    // reconciliation happens (spec MUST NOT accept them).
+    // Structurally unsigned or malformed phone rows refuse the whole run
+    // BEFORE any reconciliation (spec: "MUST NOT accept unsigned phone
+    // entries"). A row that IS shaped like a signed entry but whose
+    // signature does not verify is different -- that is evidence, and the
+    // spec lists it as a report category, so `diff_logs` handles it below
+    // (it lands in `signature_failures` and makes the report non-clean).
     let text = std::fs::read_to_string(phone_export)
         .map_err(|e| CliError::fail(format!("cannot read {}: {e}", phone_export.display())))?;
     let phone_rows = logdiff::parse_phone_export(&text)
@@ -357,28 +361,6 @@ pub fn diff(phone_export: &Path, paths: DiffPaths) -> Result<(), CliError> {
     };
     let phone_pub = IdentityPublicKey::from_bytes(&pairing.id_pub)
         .map_err(|e| CliError::fail(format!("stored pairing malformed: {e}")))?;
-
-    // Wrong-signature rows are refused outright too: they are forged or
-    // corrupted input, not a reconciliation category.
-    let bad: Vec<String> = phone_rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| !r.verify_signature(&phone_pub))
-        .map(|(i, r)| {
-            format!(
-                "line {}: signature verification failed (req_id {}, {})",
-                i + 1,
-                ReqId(r.req_id).hex(),
-                r.event_type
-            )
-        })
-        .collect();
-    if !bad.is_empty() {
-        return Err(CliError::fail(format!(
-            "phone export contains entries that fail signature verification:\n{}",
-            bad.join("\n")
-        )));
-    }
 
     let db = open_log(&paths.executions_db)?;
     let pc_events: Vec<PcEvent> = db

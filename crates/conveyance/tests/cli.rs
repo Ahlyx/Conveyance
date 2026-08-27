@@ -540,12 +540,15 @@ fn diff_flags_missing_execution_without_failing() {
 }
 
 #[test]
-fn diff_refuses_unsigned_export_naming_the_line() {
+fn diff_refuses_structurally_unsigned_export_before_reconciling() {
     let dir = temp_dir("diff-unsigned");
     let fx = DiffFixture::new(dir.path());
     let export = dir.path().join("phone.jsonl");
 
-    // One properly signed row followed by an unsigned forgery.
+    // One properly signed row followed by a row with NO signature field
+    // at all -- structurally unsigned, which the parser must reject
+    // outright (spec: "MUST NOT accept unsigned phone entries"), before
+    // any reconciliation output is produced.
     let good = logdiff::signed_row(
         &fx.phone_key,
         [1u8; 16],
@@ -553,13 +556,12 @@ fn diff_refuses_unsigned_export_naming_the_line() {
         "{}",
         unix_now(),
     );
-    let mut lines = vec![logdiff::render_phone_export(std::slice::from_ref(&good))];
-    lines.push(format!(
-        "{{\"req_id\":\"{}\",\"event_type\":\"approval_granted\",\"payload_json\":\"{{}}\",\"timestamp\":1,\"signature\":\"{}\"}}",
+    let mut body = logdiff::render_phone_export(std::slice::from_ref(&good));
+    body.push_str(&format!(
+        "{{\"req_id\":\"{}\",\"event_type\":\"approval_granted\",\"payload_json\":\"{{}}\",\"timestamp\":1}}\n",
         hex_encode(&[2u8; 16]),
-        hex_encode(&[0u8; 64]),
     ));
-    std::fs::write(&export, lines.concat()).unwrap();
+    std::fs::write(&export, body).unwrap();
 
     bin()
         .args(["log", "diff"])
@@ -568,5 +570,61 @@ fn diff_refuses_unsigned_export_naming_the_line() {
         .arg(dir.path())
         .assert()
         .failure()
-        .stderr(predicates::str::contains("signature verification failed"));
+        .stderr(predicates::str::contains("phone export rejected"))
+        .stdout(predicates::str::contains("matched approvals/executions").not());
+}
+
+/// A row that IS shaped like a signed entry but whose signature does not
+/// verify is a *reported category*, not a pre-reconciliation abort (spec
+/// "Diff tool" lists signature failures as a category). The CLI must
+/// reconcile the rest, print the failure, and exit nonzero -- exactly
+/// what `logdiff::diff_logs` reports for the same input.
+#[test]
+fn diff_bad_signature_is_a_report_category_matching_the_library() {
+    let dir = temp_dir("diff-badsig");
+    let fx = DiffFixture::new(dir.path());
+    let export = dir.path().join("phone.jsonl");
+
+    let good = logdiff::signed_row(
+        &fx.phone_key,
+        [1u8; 16],
+        "approval_granted",
+        "{}",
+        unix_now() - 100,
+    );
+    // Same shape, valid 128-hex signature string, but all-zero bytes ->
+    // verification fails.
+    let mut forged = logdiff::signed_row(
+        &fx.phone_key,
+        [2u8; 16],
+        "approval_granted",
+        "{}",
+        unix_now() - 90,
+    );
+    forged.signature = [0u8; 64];
+
+    let rows = vec![good.clone(), forged.clone()];
+    std::fs::write(&export, logdiff::render_phone_export(&rows)).unwrap();
+
+    // Library view of the same inputs (no PC events).
+    let phone_pub = fx.phone_key.public_key();
+    let parsed = logdiff::parse_phone_export(&std::fs::read_to_string(&export).unwrap()).unwrap();
+    let report = logdiff::diff_logs(&[], &parsed, &phone_pub);
+    assert!(!report.clean(), "library must flag the forged row");
+    assert_eq!(report.signature_failures.len(), 1);
+
+    // CLI view of the same inputs must agree: reconciliation runs, the
+    // forged row is printed as a signature failure, exit is nonzero.
+    bin()
+        .args(["log", "diff"])
+        .arg(&export)
+        .arg("--data-dir")
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("security-relevant"))
+        .stdout(
+            predicates::str::contains("matched approvals/executions")
+                .and(predicates::str::contains("signature failures: 1")),
+        );
 }
