@@ -776,6 +776,16 @@ pub(crate) mod test_support {
     /// protocol -- pings, scripted approval decisions, execute
     /// responses, list_services -- until the daemon drops the
     /// transport.
+    ///
+    /// Kept separate from [`mockphone::mock_phone_serve`] on purpose,
+    /// not by accident: that one is the always-approve phone a *real*
+    /// MCP client drives against a *real* daemon binary (transcript to
+    /// a file + stderr), and it must never block on a scripted channel.
+    /// This one is the in-process negative-path harness -- it scripts
+    /// denials, expiries, silence, and forged signatures through
+    /// [`PhoneAction`] and keeps its transcript in memory for tests to
+    /// assert on. The overlapping happy-path arms are small; unifying
+    /// them behind one cfg would cost more indirection than it saves.
     #[allow(clippy::too_many_lines)]
     async fn mock_phone_task(
         mut rx: mpsc::Receiver<MockLink>,

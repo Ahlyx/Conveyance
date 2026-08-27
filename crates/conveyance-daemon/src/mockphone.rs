@@ -18,6 +18,14 @@
 //! CONVEYANCE_MOCK_PHONE_LOG (if set) AND mirrored to stderr, so E2E
 //! verification can assert against the phone side of the story just
 //! like the real approvals.db would allow after phase 10.
+//!
+//! Deliberately distinct from the daemon's in-process test harness
+//! (`test_support::mock_phone_task` in lib.rs): this one is
+//! always-approve and never waits on a scripted channel, because a real
+//! MCP client sits on the other end. The harness one scripts denials,
+//! timeouts, and forged signatures for unit tests. The shared
+//! happy-path handling is small enough that keeping the two apart is
+//! cheaper than one cfg-branched serve loop.
 
 use std::future::Future;
 use std::path::PathBuf;
