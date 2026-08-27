@@ -96,7 +96,7 @@ pub fn open(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::test_support::{CounterEntropy, FailingEntropy};
+    use crate::test_support::{CounterEntropy, FailingEntropy};
 
     fn hex(s: &str) -> Vec<u8> {
         (0..s.len())

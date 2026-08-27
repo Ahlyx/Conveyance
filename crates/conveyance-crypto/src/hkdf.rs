@@ -120,7 +120,7 @@ fn expand<D: Digest<OutputSize = U32> + Clone>(prk: &[u8; HASH_LEN], info: &[u8]
 
 /// Full HKDF-BLAKE2s with the spec's salt semantics: omitted salt means
 /// 32 zero bytes (RFC 5869 §2.2; see CONVEYANCE_SPEC.md amendment).
-pub(crate) fn hkdf_blake2s(ikm: &[u8], info: &[u8], okm: &mut [u8]) {
+pub fn hkdf_blake2s(ikm: &[u8], info: &[u8], okm: &mut [u8]) {
     let prk = extract::<Blake2s256>(&[0u8; HASH_LEN], ikm);
     expand::<Blake2s256>(&prk, info, okm);
 }

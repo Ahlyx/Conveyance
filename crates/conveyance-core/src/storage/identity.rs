@@ -23,7 +23,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::{
-    EntropySource, Secret, aead, hex_decode, hex_decode_array, hex_encode, hkdf::hkdf_blake2s,
+    EntropySource, Secret, aead, hex_decode, hex_decode_array, hex_encode, hkdf_blake2s,
     sign::IdentitySecretKey,
 };
 

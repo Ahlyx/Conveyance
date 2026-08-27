@@ -1,7 +1,13 @@
 //! Cryptographic primitives for Conveyance, isolated behind small typed
 //! wrappers.
 //!
-//! Design rules for this module, in priority order:
+//! This crate was extracted from `conveyance-core` for phase 10.1: it is
+//! the pure, I/O-free subset (no rusqlite, keyring, tokio, or BLE) so it
+//! can cross-compile to Android and be shared with the phone side via
+//! UniFFI. `conveyance-core` re-exports it as `conveyance_core::crypto`,
+//! so every pre-phase-10 call site is unchanged.
+//!
+//! Design rules for this crate, in priority order:
 //!
 //! 1. **Fixed primitives.** Everything here implements a choice already
 //!    recorded in CONVEYANCE_SPEC.md ("Cryptographic primitives"). The
@@ -40,6 +46,12 @@ pub(crate) mod hkdf;
 pub mod kdf;
 pub mod recovery;
 pub mod sign;
+
+/// HKDF-BLAKE2s (RFC 5869), the one entry point the rest of the workspace
+/// needs — `conveyance-core`'s storage layer derives its DEK with it. The
+/// `hkdf` module stays crate-private so the hand-rolled HMAC internals are
+/// not part of the public surface; only this function is.
+pub use hkdf::hkdf_blake2s;
 
 use thiserror::Error;
 use zeroize::Zeroizing;
@@ -146,7 +158,7 @@ fn from_lower_hex_digit(b: u8) -> Option<u8> {
 /// this (or a crate type that already zeroizes) so a dropped key does
 /// not linger in freed memory waiting for a heap-scanning attacker.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
-pub struct Secret<const N: usize>(pub(super) Zeroizing<[u8; N]>);
+pub struct Secret<const N: usize>(pub(crate) Zeroizing<[u8; N]>);
 
 impl<const N: usize> Secret<N> {
     pub fn from_bytes(bytes: [u8; N]) -> Self {
@@ -165,14 +177,17 @@ impl<const N: usize> std::fmt::Debug for Secret<N> {
 }
 
 /// Shared test-only entropy sources, so every module's failure paths and
-/// determinism checks draw from the same seams.
-#[cfg(test)]
-pub(crate) mod test_support {
+/// determinism checks draw from the same seams. Gated behind the
+/// `test-support` feature (not just `#[cfg(test)]`) because
+/// `conveyance-core`'s pairing/session/wire/storage tests consume these
+/// across the crate boundary.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
     use super::*;
 
     /// Deterministic source for tests that need reproducible key
     /// material; cycles a counter so successive fills differ.
-    pub(crate) struct CounterEntropy;
+    pub struct CounterEntropy;
 
     impl EntropySource for CounterEntropy {
         fn fill(&self, dest: &mut [u8]) -> Result<(), CryptoError> {
@@ -187,7 +202,7 @@ pub(crate) mod test_support {
 
     /// Always fails; exists so every `EntropyFailure` branch in the
     /// module has a reachable test.
-    pub(crate) struct FailingEntropy;
+    pub struct FailingEntropy;
 
     impl EntropySource for FailingEntropy {
         fn fill(&self, _dest: &mut [u8]) -> Result<(), CryptoError> {
@@ -198,7 +213,7 @@ pub(crate) mod test_support {
     /// Fills every request with the same bytes, cycled to the
     /// destination length. For tests that must pin the exact value a
     /// generator returns (e.g. forcing a known pairing nonce).
-    pub(crate) struct FixedEntropy(pub Vec<u8>);
+    pub struct FixedEntropy(pub Vec<u8>);
 
     impl EntropySource for FixedEntropy {
         fn fill(&self, dest: &mut [u8]) -> Result<(), CryptoError> {

@@ -70,7 +70,7 @@ impl DhPublic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::test_support::{CounterEntropy, FailingEntropy};
+    use crate::test_support::{CounterEntropy, FailingEntropy};
 
     fn hex32(s: &str) -> [u8; 32] {
         let v: Vec<u8> = (0..s.len())

@@ -16,7 +16,10 @@
 //! fixing.
 
 pub mod config;
-pub mod crypto;
+/// Cryptographic primitives. Extracted to the standalone `conveyance-crypto`
+/// crate (phase 10.1) so it can cross-compile to Android; re-exported here
+/// so `conveyance_core::crypto::*` paths are unchanged.
+pub use conveyance_crypto as crypto;
 pub mod error;
 pub mod pairing;
 pub mod paths;

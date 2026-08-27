@@ -1,0 +1,28 @@
+[package]
+name = "conveyance-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Conveyance cryptographic primitives: Ed25519/X25519, ChaCha20-Poly1305, Argon2id, HKDF-BLAKE2s, BIP-39 recovery, RFC 8785 canonical JSON, and the SHA-256 hash chain. Pure-Rust, no I/O — extracted from conveyance-core so it can cross-compile to Android (phase 10.1)."
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+ed25519-dalek.workspace = true
+x25519-dalek.workspace = true
+chacha20poly1305.workspace = true
+argon2.workspace = true
+bip39.workspace = true
+blake2.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+getrandom.workspace = true
+
+[features]
+# Exposes the deterministic / failing `EntropySource` impls (`test_support`)
+# to dependent crates' test suites. `#[cfg(test)]` items do not cross crate
+# boundaries; conveyance-core's pairing/session/wire/storage tests need
+# these seams. Mirrors the same pattern conveyance-core uses for its
+# keychain stub.
+test-support = []

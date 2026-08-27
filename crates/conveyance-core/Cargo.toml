@@ -6,20 +6,22 @@ rust-version.workspace = true
 description = "Shared foundations for Conveyance: crypto, storage, sessions, wire protocol, transport, pairing, config, error model"
 
 [dependencies]
+# Cryptographic primitives now live in their own crate so they can
+# cross-compile to Android (phase 10.1). Re-exported below as
+# `conveyance_core::crypto`, so call sites in this crate and the
+# daemon/shim/CLI are unchanged.
+conveyance-crypto = { path = "../conveyance-crypto" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 dirs.workspace = true
-ed25519-dalek.workspace = true
-x25519-dalek.workspace = true
-chacha20poly1305.workspace = true
-argon2.workspace = true
-bip39.workspace = true
+# blake2 / sha2 are still used directly outside the crypto module
+# (storage/identity.rs, storage/pairings.rs); zeroize likewise
+# (session, storage/identity.rs).
 blake2.workspace = true
 sha2.workspace = true
 zeroize.workspace = true
-getrandom.workspace = true
 rusqlite.workspace = true
 keyring.workspace = true
 tokio.workspace = true
@@ -45,6 +47,10 @@ ble = ["dep:btleplug", "dep:uuid", "dep:futures-lite"]
 test-support = []
 
 [dev-dependencies]
+# The crypto crate's deterministic/failing EntropySource seams, used by
+# the pairing/session/wire/storage test suites here. Same crate as the
+# [dependencies] entry above; cargo unions the features for test builds.
+conveyance-crypto = { path = "../conveyance-crypto", features = ["test-support"] }
 tempfile.workspace = true
 # test-util enables tokio::time::pause()/advance() for deterministic
 # timer tests. Dev-only: production builds never see it.

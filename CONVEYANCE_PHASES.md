@@ -1,14 +1,14 @@
 # Conveyance — Phased Implementation Plan
   Better to have 12 clean phases than 10 messy ones.
 - If a phase turns out to be much bigger than expected, split it.
-## Phase 7 � Daemon binary & IPC
+## Phase 7 � Daemon binary & IPC
 
 Split into two sub-phases (7.0, 7.1) during planning: the original
 single phase composed six prior modules plus three new concerns (IPC,
 long-running session ownership, request routing), which exceeded one
 review gate.
 
-### Phase 7.0 � Daemon skeleton, IPC & session lifecycle
+### Phase 7.0 � Daemon skeleton, IPC & session lifecycle
 
 **Scope.** Long-running daemon as a library function
 (`conveyance-daemon::daemon::run(config)`); config resolution and
@@ -36,7 +36,7 @@ socket released, <=10 s drain.
   phone; two concurrent IPC clients observe consistent state.
 - Shutdown is clean and restartable (no stale socket lock).
 
-### Phase 7.1 � Request routing & crash recovery
+### Phase 7.1 � Request routing & crash recovery
 
 **Scope.** AuthenticatedRequest and ListServices routed over an active
 session to the phone: ApprovalRequest -> signed ApprovalResponse ->
@@ -688,14 +688,22 @@ Follow persistent rules. Propose your plan before writing code.
 - **10.10** — App polish: settings, credential management UI,
   session status UI, kill switch.
 
-**Decision point at 10.1:** implement crypto in Kotlin (with well-vetted
-Kotlin/Java libraries like Tink, BouncyCastle for Argon2), or reuse the
-Rust `conveyance-core::crypto` module via JNI/UniFFI. Rust reuse gives
-one implementation to audit; Kotlin implementation avoids the JNI
-build complexity. Recommendation: try UniFFI first (Mozilla-maintained,
-generates Kotlin bindings from Rust automatically), fall back to
-native Kotlin if the tooling causes friction. This decision affects
-10.1, 10.4, and to a lesser extent 10.7.
+**Decision approach for 10.1:** UniFFI is the strongly-preferred path
+because it eliminates duplicate implementations of security-critical code
+(canonical JSON, HKDF-BLAKE2s, signing-payload construction) AND because
+Phase 10.4 (Noise_KK) has no viable pure-Kotlin implementation — the
+alternative to reusing snow via UniFFI is hand-rolling Noise_KK, which is
+significantly more dangerous than hand-rolling any primitive. The
+conveyance-core::crypto module should be extracted into a standalone
+conveyance-crypto crate as a prerequisite regardless of path (the
+pre-Phase-10 audit already flagged this scope drift). Then a time-boxed
+spike (≤2 days) verifies UniFFI viability: cargo-ndk builds for
+arm64-v8a and x86_64, one primitive round-trips through generated Kotlin
+bindings against an RFC vector, both ABIs pass on emulator CI. If the
+spike succeeds, proceed with UniFFI for the full 10.1 surface. If the
+spike fails, do not silently fall back — report what failed and decide
+deliberately whether to invest further in UniFFI or accept the
+significant downstream cost of hand-rolling Noise in Kotlin.
 
 **Prompt for Phase 10.0 (scaffolding — start here):**
 

@@ -130,7 +130,7 @@ pub struct IdentityKeyset {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::test_support::{CounterEntropy, FailingEntropy};
+    use crate::test_support::{CounterEntropy, FailingEntropy};
 
     fn hex(s: &str) -> Vec<u8> {
         (0..s.len())
@@ -274,12 +274,12 @@ mod tests {
         let phrase = RecoveryPhrase::from_words(ZEROS_24WORD).unwrap();
         let keys = phrase.to_seed("").derive_identity_keys();
 
-        let sk = crate::crypto::sign::IdentitySecretKey::from_bytes(*keys.ed25519_secret.expose());
+        let sk = crate::sign::IdentitySecretKey::from_bytes(*keys.ed25519_secret.expose());
         let sig = sk.sign(b"pipeline check");
         sk.public_key().verify(b"pipeline check", &sig).unwrap();
 
-        let dh = crate::crypto::dh::DhSecret::from_bytes(*keys.x25519_secret.expose());
-        let _shared = dh.dh(&crate::crypto::dh::DhPublic::from_bytes([7u8; 32]));
+        let dh = crate::dh::DhSecret::from_bytes(*keys.x25519_secret.expose());
+        let _shared = dh.dh(&crate::dh::DhPublic::from_bytes([7u8; 32]));
     }
 
     #[test]
