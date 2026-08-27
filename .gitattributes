@@ -4,3 +4,17 @@
 
 # Not text, whatever they look like.
 *.db binary
+*.jar binary
+*.keystore binary
+*.jks binary
+
+# Gradle wrapper: the shell script must stay LF, the batch file CRLF,
+# regardless of the `* text=auto eol=lf` rule above.
+gradlew text eol=lf
+*.bat text eol=crlf
+
+# Android binary resources.
+*.png binary
+*.webp binary
+*.ttf binary
+*.otf binary

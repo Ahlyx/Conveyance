@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Phase 10.0 declares NO permissions. Bluetooth (BLUETOOTH_SCAN /
+      BLUETOOTH_ADVERTISE / BLUETOOTH_CONNECT), camera (QR scanner),
+      foreground-service, and notification permissions are added by the
+      sub-phases that use them, so the requested surface always matches
+      what the code actually does.
+
+      allowBackup=false: per the spec's "Storage layout", phone-side
+      state is device-bound and recovery is via the 24-word phrase, never
+      a cloud backup or device transfer. backup_rules / dataExtractionRules
+      state the same exclusion explicitly for the API levels that read
+      them (allowBackup alone is deprecated from Android 12).
+    -->
+
+    <application
+        android:name=".ConveyanceApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.App.Starting"
+        tools:targetApi="31">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.App.Starting">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

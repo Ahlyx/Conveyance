@@ -1,0 +1,46 @@
+name: Android CI
+
+# Scoped to the Android track so it does not run on Rust-only changes,
+# and the Rust workflow (ci.yml) is likewise scoped away from android/**.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: lint + unit tests + assemble
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v5
+
+      # AGP 8.x requires JDK 17. The ubuntu runner ships the Android SDK
+      # (ANDROID_HOME / ANDROID_SDK_ROOT preset), so no separate SDK
+      # setup is needed for the compile/target level pinned in
+      # libs.versions.toml.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The wrapper is committed; guard against a lost exec bit when it
+      # is committed from a non-POSIX filesystem.
+      - run: chmod +x ./gradlew
+
+      - run: ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug

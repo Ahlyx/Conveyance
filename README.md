@@ -120,11 +120,15 @@ everything else in this section.
 
 ### Not yet built
 
-- **The Android app (phase 10)** — not started. It is the entire phone side:
-  GATT peripheral role, Noise initiator, credential store, approval UI,
-  Tier 1/2/3 authentication flows, recovery phrase handling.
+- **The Android app (phase 10)** — **scaffolding only** (`android/`). An empty
+  Kotlin/Compose app with Hilt wired, a splash screen, a placeholder screen,
+  and its own CI workflow (`android.yml`): it builds and launches and does
+  nothing else. None of the phone side exists yet — no crypto, storage, BLE,
+  Noise, pairing, credential store, approval UI, or auth flows. minSdk 30;
+  package `com.ahlyxlabs.conveyance`. Toolchain versions live in
+  `android/gradle/libs.versions.toml`.
 - **Real-hardware pairing.** Pairing is verified against the mock phone only;
-  pairing a physical phone waits for phase 10.
+  pairing a physical phone waits for the rest of phase 10.
 - iOS, SSH/git signing adapters, multi-device, multi-user policies — later
   roadmap phases (see Roadmap).
 
@@ -228,6 +232,19 @@ other MCP clients take the equivalent shape):
 ```
 
 On Windows point `command` at `conveyance.exe`.
+
+### Android app (phase 10, scaffolding)
+
+The phone side lives in `android/` as a standalone Gradle project. It needs
+JDK 17 and the Android SDK; the Gradle version is pinned via the wrapper.
+
+```bash
+cd android
+./gradlew lintDebug testDebugUnitTest assembleDebug
+```
+
+It currently builds an empty app that opens to a placeholder screen. Nothing
+below the UI is implemented.
 
 **Be clear about what this gets you today:** pairing requires scanning the QR
 with the Conveyance phone app, which does not exist yet. Until phase 10 ships,

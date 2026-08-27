@@ -1,9 +1,15 @@
 name: CI
 
 on:
+  # Rust track. The Android app has its own workflow (android.yml);
+  # changes confined to android/** skip this matrix and vice versa.
   push:
     branches: [main]
+    paths-ignore:
+      - "android/**"
   pull_request:
+    paths-ignore:
+      - "android/**"
   workflow_dispatch:
 
 env:

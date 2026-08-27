@@ -15,3 +15,17 @@ __pycache__/
 
 # Personal standing instructions (not project-specific)
 ENGINEERING-GUARDRAILS.md
+
+# ---- Android / Gradle (phase 10) ----
+/android/.gradle/
+/android/build/
+/android/**/build/
+/android/local.properties
+/android/captures/
+/android/.kotlin/
+/android/app/release/
+.idea/
+*.iml
+# Signing material never belongs in git.
+*.jks
+*.keystore
