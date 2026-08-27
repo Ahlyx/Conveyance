@@ -368,9 +368,10 @@ be user-bypassable through configuration.
 
 Session start MUST fail closed if:
 
-- No paired phone is available (return `PhoneNotPaired`).
+- No paired phone is available (return `PhoneNotPaired`, wire code
+  `conveyance/phone_not_paired`).
 - Phone is not reachable via BLE within a 30-second timeout
-  (`PhoneUnreachable`).
+  (`PhoneUnreachable`, wire code `conveyance/phone_unreachable`).
 - The Noise handshake fails for any reason (`HandshakeFailed`, generic —
   MUST NOT leak which validation failed).
 - The peer static key does not match the paired-and-stored value
@@ -1005,10 +1006,30 @@ Named error codes:
 | `conveyance/service_unknown` | No credentials for the requested service | No |
 | `conveyance/message_too_large` | Reassembly buffer exceeded | No |
 | `conveyance/keychain_unavailable` | OS keychain cannot be reached | No |
+| `conveyance/phone_not_paired` | No phone is paired with this daemon | No — user must run `conveyance pair` first |
+| `conveyance/signature_verification_failed` | A phone-signed response (Approval/Execute) failed Ed25519 verification against the paired identity | No — attack signal or a peer implementation bug |
+| `conveyance/internal` | An unexpected internal failure with no more specific code | Case-by-case; the `retryable` field is authoritative |
+
+`conveyance/phone_not_paired` is the concrete code for the
+`PhoneNotPaired` condition named in "Session start"; it is distinct from
+`phone_unreachable` (a phone IS paired but could not be reached).
+
+`conveyance/signature_verification_failed` is the code for a response
+that arrived over an authenticated session but whose portable Ed25519
+signature does not verify. Like `handshake_failed` and
+`peer_identity_mismatch`, its message MUST stay generic — it names the
+category, never which field or check failed.
+
+`conveyance/internal` is the deliberate catch-all for failures that do
+not map to any code above (transient encode failures, a full request
+queue, the daemon's own IPC surface being unreachable from the shim).
+Use it sparingly: log the specific cause locally, never leak it in the
+`message`, and set `retryable` to match the actual situation rather than
+assuming either value.
 
 The error message MUST NOT leak information about which validation failed
-for security-relevant errors (handshake, peer identity). Users learn the
-category, not the specifics.
+for security-relevant errors (handshake, peer identity, signature
+verification). Users learn the category, not the specifics.
 
 ---
 
