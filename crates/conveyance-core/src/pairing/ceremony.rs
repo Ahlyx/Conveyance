@@ -77,23 +77,29 @@ pub struct PairedPeer {
 /// QR window for the phone to advertise and connect, takes ONE confirm,
 /// answers with the Ack, persists the peer. Any rejection returns Err
 /// with the nonce burned; rerun `conveyance pair` for a fresh code.
-pub async fn run_pairing<T, D>(
+///
+/// `entropy` sources the single-use pairing nonce -- production passes
+/// [`crate::crypto::OsEntropy`]; tests inject a deterministic source so
+/// the replay gate can be exercised without a driver copy.
+pub async fn run_pairing<T, D, E>(
     transport: &mut T,
     ctx: &mut CeremonyContext<'_>,
     limits: CeremonyLimits,
+    entropy: &E,
     mut display: D,
 ) -> Result<PairedPeer, PairingError>
 where
     T: Transport,
     T::Link: Link + Send,
     D: FnMut(&PairingQr),
+    E: EntropySource,
 {
     // ---- QR_DISPLAYED ---------------------------------------------------
     let started = tokio::time::Instant::now();
     let qr_deadline = started + limits.qr_ttl;
 
     let mut nonce = [0u8; 32];
-    crate::crypto::OsEntropy.fill(&mut nonce)?;
+    entropy.fill(&mut nonce)?;
     let pc_id_pub = ctx.pc_id_secret.public_key().to_bytes();
 
     let qr = PairingQr::new(
@@ -213,7 +219,7 @@ mod tests {
     use crate::crypto::OsEntropy;
     use crate::crypto::dh::DhSecret;
     use crate::crypto::sign::IdentityPublicKey;
-    use crate::crypto::test_support::CounterEntropy;
+    use crate::crypto::test_support::{CounterEntropy, FixedEntropy};
     use crate::pairing::messages::PairingConfirm;
     use crate::storage::pairings::PairingsDb;
     use crate::transport::TransportError;
@@ -381,6 +387,7 @@ mod tests {
             &mut ta,
             &mut ctx,
             CeremonyLimits::raw(60, 10, 300),
+            &OsEntropy,
             display_to(&qr_tx),
         )
         .await
@@ -437,6 +444,7 @@ mod tests {
             &mut ta,
             &mut ctx,
             CeremonyLimits::raw(60, 10, 300),
+            &OsEntropy,
             display_to(&qr_tx),
         )
         .await;
@@ -481,6 +489,7 @@ mod tests {
             &mut ta,
             &mut ctx,
             CeremonyLimits::raw(60, 10, 300),
+            &OsEntropy,
             display_to(&qr_tx),
         )
         .await;
@@ -524,6 +533,7 @@ mod tests {
             &mut ta,
             &mut ctx,
             CeremonyLimits::raw(60, 10, 300),
+            &OsEntropy,
             display_to(&qr_tx),
         )
         .await;
@@ -557,7 +567,14 @@ mod tests {
             store: &store,
             nonces: &mut nonces,
         };
-        let result = run_pairing(&mut ta, &mut ctx, CeremonyLimits::raw(60, 1, 300), |_| {}).await;
+        let result = run_pairing(
+            &mut ta,
+            &mut ctx,
+            CeremonyLimits::raw(60, 1, 300),
+            &OsEntropy,
+            |_| {},
+        )
+        .await;
         assert!(matches!(result, Err(PairingError::ConfirmTimedOut)));
         assert_eq!(store.count().unwrap(), 0);
     }
@@ -600,92 +617,12 @@ mod tests {
             &mut transport,
             &mut ctx,
             CeremonyLimits::raw(2, 1, 300),
+            &OsEntropy,
             |_| {},
         )
         .await;
         assert!(matches!(result, Err(PairingError::QrExpired)));
         assert_eq!(store.count().unwrap(), 0);
-    }
-
-    /// Test-only driver with a FORCED nonce: fresh entropy never
-    /// collides, so replay needs this seam. Duplicates the small driver
-    /// prologue deliberately -- production stays seam-free.
-    async fn run_forced_nonce<D>(
-        transport: &mut MockTransport,
-        ctx: &mut CeremonyContext<'_>,
-        limits: CeremonyLimits,
-        forced_nonce: [u8; 32],
-        mut display: D,
-    ) -> Result<PairedPeer, PairingError>
-    where
-        D: FnMut(&PairingQr),
-    {
-        let qr_deadline = tokio::time::Instant::now() + limits.qr_ttl;
-        let pc_id_pub = ctx.pc_id_secret.public_key().to_bytes();
-        let qr = PairingQr::new(
-            unix_now(),
-            pc_id_pub,
-            ctx.pc_dh_pub,
-            forced_nonce,
-            &ctx.pc_name,
-            ctx.service_uuid_bytes,
-        )?;
-        display(&qr);
-
-        let mut link = loop {
-            if tokio::time::Instant::now() >= qr_deadline {
-                return Err(PairingError::QrExpired);
-            }
-            let wait = qr_deadline.saturating_duration_since(tokio::time::Instant::now());
-            match tokio::time::timeout(wait.min(Duration::from_millis(50)), transport.connect(wait))
-                .await
-            {
-                Err(_) => continue,
-                Ok(Err(_)) => continue,
-                Ok(Ok(link)) => break link,
-            }
-        };
-
-        let inbound =
-            match tokio::time::timeout(limits.confirm_timeout, Box::pin(link.recv())).await {
-                Err(_) => return Err(PairingError::ConfirmTimedOut),
-                Ok(Ok(chunk)) => chunk,
-                Ok(Err(_)) => return Err(PairingError::GenericFailed),
-            };
-        let confirm = match decode(&inbound) {
-            Ok(WireMessage::PairingConfirm(c)) => c,
-            _ => return Err(PairingError::GenericFailed),
-        };
-        if ctx.nonces.record_and_check(&forced_nonce) {
-            return Err(PairingError::ReplayedNonce);
-        }
-        let phone_public = match IdentityPublicKey::from_bytes(&confirm.phone_id_pub) {
-            Ok(pk) => pk,
-            Err(_) => return Err(PairingError::GenericFailed),
-        };
-        if confirm
-            .verify(&phone_public, &pc_id_pub, &forced_nonce)
-            .is_err()
-        {
-            return Err(PairingError::GenericFailed);
-        }
-        let ack = PairingAck::sign(
-            ctx.pc_id_secret,
-            &forced_nonce,
-            &pc_id_pub,
-            &confirm.phone_id_pub,
-            &confirm.phone_dh_pub,
-        );
-        link.send(&encode(&WireMessage::PairingAck(ack))?)
-            .await
-            .map_err(|e| PairingError::Transport(e.to_string()))?;
-        let record = ctx
-            .store
-            .record(confirm.phone_id_pub, confirm.phone_dh_pub, unix_now())?;
-        Ok(PairedPeer {
-            phone_id_pub: record.id_pub,
-            phone_dh_pub: record.dh_pub,
-        })
     }
 
     #[tokio::test]
@@ -702,8 +639,10 @@ mod tests {
             mut tb,
         } = fixture();
 
+        // Fixed entropy makes run_pairing mint this exact nonce, which an
+        // earlier ceremony already consumed -- so the replay gate trips.
+        // No driver copy needed: the real run_pairing runs, seam and all.
         let forced_nonce = [0x42u8; 32];
-        // An earlier ceremony already consumed this nonce.
         assert!(!nonces.record_and_check(&forced_nonce));
 
         let phone_link = tb.connect(Duration::ZERO).await.unwrap();
@@ -718,17 +657,12 @@ mod tests {
             store: &store,
             nonces: &mut nonces,
         };
-        let result = run_forced_nonce(
+        let result = run_pairing(
             &mut ta,
             &mut ctx,
             CeremonyLimits::raw(60, 10, 300),
-            forced_nonce,
-            |qr| {
-                let payload = qr.encode().unwrap();
-                qr_tx
-                    .try_send(payload)
-                    .expect("qr channel must be idle here");
-            },
+            &FixedEntropy(forced_nonce.to_vec()),
+            display_to(&qr_tx),
         )
         .await;
 

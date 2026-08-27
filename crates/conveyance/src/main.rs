@@ -536,10 +536,16 @@ async fn pair(name: Option<String>) -> Result<(), String> {
     println!("Pairing: scan this QR with Conveyance on your phone.");
     println!("The code expires in 60 seconds.\n");
 
-    let peer = run_pairing(&mut transport, &mut ctx, CeremonyLimits::spec(), |qr| {
-        println!("{}", qr.render_ascii());
-        println!("Waiting for phone to advertise and confirm...\n");
-    })
+    let peer = run_pairing(
+        &mut transport,
+        &mut ctx,
+        CeremonyLimits::spec(),
+        &conveyance_core::crypto::OsEntropy,
+        |qr| {
+            println!("{}", qr.render_ascii());
+            println!("Waiting for phone to advertise and confirm...\n");
+        },
+    )
     .await
     .map_err(|e| e.to_string())?;
 

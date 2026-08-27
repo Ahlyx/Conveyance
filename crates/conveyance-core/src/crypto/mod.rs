@@ -189,6 +189,21 @@ pub(crate) mod test_support {
             Err(CryptoError::EntropyFailure)
         }
     }
+
+    /// Fills every request with the same bytes, cycled to the
+    /// destination length. For tests that must pin the exact value a
+    /// generator returns (e.g. forcing a known pairing nonce).
+    pub(crate) struct FixedEntropy(pub Vec<u8>);
+
+    impl EntropySource for FixedEntropy {
+        fn fill(&self, dest: &mut [u8]) -> Result<(), CryptoError> {
+            assert!(!self.0.is_empty(), "FixedEntropy needs at least one byte");
+            for (i, b) in dest.iter_mut().enumerate() {
+                *b = self.0[i % self.0.len()];
+            }
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
