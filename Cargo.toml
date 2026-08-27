@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/conveyance-crypto",
+    "crates/conveyance-crypto-ffi",
     "crates/conveyance-core",
     "crates/conveyance-daemon",
     "crates/conveyance-shim",
@@ -124,3 +125,9 @@ futures-lite = "=2.6.1"
 # exit codes/stdout. Test-only, but pinned here with everything else.
 assert_cmd = "=2.1.1"
 predicates = "=3.1.3"
+#
+# UniFFI (phase 10.1): generates the Android app's Kotlin crypto bindings
+# from conveyance-crypto-ffi. `cli` feature (enabled by that crate) gives
+# the in-crate uniffi-bindgen bin. Bindgen and runtime versions MUST
+# match, which one pin here guarantees.
+uniffi = "=0.32.0"

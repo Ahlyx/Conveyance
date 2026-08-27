@@ -1,17 +1,30 @@
 name: Android CI
 
-# Scoped to the Android track so it does not run on Rust-only changes,
-# and the Rust workflow (ci.yml) is likewise scoped away from android/**.
+# Scoped to the Android track. The Rust workflow (ci.yml) is scoped away
+# from android/**, but the Android build now cross-compiles the
+# conveyance-crypto-ffi Rust crate (phase 10.1 UniFFI bridge), so changes
+# to that crate — and its conveyance-crypto dependency, and the workspace
+# manifests — must trigger this workflow too.
 on:
   push:
     branches: [main]
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
+      - "crates/conveyance-crypto/**"
+      - "crates/conveyance-crypto-ffi/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
   pull_request:
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
+      - "crates/conveyance-crypto/**"
+      - "crates/conveyance-crypto-ffi/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
   workflow_dispatch:
 
 concurrency:
@@ -20,27 +33,71 @@ concurrency:
 
 jobs:
   build:
-    name: lint + unit tests + assemble
+    name: rust bridge + lint + unit + assemble + instrumented
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: android
     steps:
       - uses: actions/checkout@v5
 
       # AGP 8.x requires JDK 17. The ubuntu runner ships the Android SDK
-      # (ANDROID_HOME / ANDROID_SDK_ROOT preset), so no separate SDK
-      # setup is needed for the compile/target level pinned in
-      # libs.versions.toml.
+      # and NDK (ANDROID_HOME / ANDROID_NDK_LATEST_HOME preset).
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # Rust side of the UniFFI bridge. Toolchain pinned to match
+      # rust-toolchain.toml / ci.yml; both Android ABIs added as targets.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.0"
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      # cargo-ndk finds the NDK via ANDROID_NDK_HOME; the runner only
+      # sets ANDROID_NDK_LATEST_HOME by default.
+      - run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+
       - uses: gradle/actions/setup-gradle@v4
 
-      # The wrapper is committed; guard against a lost exec bit when it
-      # is committed from a non-POSIX filesystem.
       - run: chmod +x ./gradlew
+        working-directory: android
 
-      - run: ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug
+      # KVM permissions so the emulator runs with hardware acceleration.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Cross-compiles conveyance-crypto-ffi to a .so for BOTH ABIs
+      # (arm64-v8a is build-verified here; x86_64 is exercised by the
+      # instrumented test below), generates the Kotlin bindings, runs
+      # lint + JVM unit tests + assembles the APK, then runs the
+      # instrumented HKDF-BLAKE2s round-trip test on an x86_64 emulator.
+      - name: lint + unit + assemble + instrumented
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          working-directory: android
+          script: >-
+            ./gradlew --no-daemon
+            lintDebug
+            testDebugUnitTest
+            assembleDebug
+            connectedDebugAndroidTest
+
+      - name: Upload instrumented test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: androidTest-results
+          path: android/app/build/reports/androidTests/
+          if-no-files-found: ignore

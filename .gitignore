@@ -24,6 +24,9 @@ ENGINEERING-GUARDRAILS.md
 /android/captures/
 /android/.kotlin/
 /android/app/release/
+# Rust .so files cross-compiled by cargo-ndk (phase 10.1 UniFFI bridge);
+# rebuilt from crates/conveyance-crypto-ffi on every Android build.
+/android/app/src/main/jniLibs/
 .idea/
 *.iml
 # Signing material never belongs in git.

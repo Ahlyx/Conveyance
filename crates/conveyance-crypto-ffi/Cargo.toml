@@ -1,0 +1,23 @@
+[package]
+name = "conveyance-crypto-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "UniFFI bridge over conveyance-crypto for the Android app. Phase 10.1 viability spike: only hkdf_blake2s is exported so far."
+
+[lib]
+# cdylib -> the .so cargo-ndk packages into the APK's jniLibs.
+# lib     -> lets the in-crate `uniffi-bindgen` bin link the same code,
+#            so bindgen and the runtime are always the same UniFFI version.
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+conveyance-crypto = { path = "../conveyance-crypto" }
+thiserror.workspace = true
+# `cli` provides `uniffi::uniffi_bindgen_main` for the bin below. Library
+# mode (generate bindings from the compiled .so) needs no UDL file.
+uniffi = { workspace = true, features = ["cli"] }
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
