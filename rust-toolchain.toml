@@ -1,0 +1,13 @@
+# The one toolchain local dev and CI both use. rustup honours this file
+# automatically on any `cargo`/`rustc` invocation in the tree, and CI's
+# toolchain step (dtolnay/rust-toolchain@master with no explicit version)
+# reads it too -- so "green locally" and "green in CI" mean the same
+# thing. Bump deliberately, alongside a clippy/fmt pass on the new
+# version; do not let `stable` drift silently.
+#
+# This is NOT the crate MSRV (that stays in Cargo.toml's rust-version).
+# It is the exact stable release we compile and lint against.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

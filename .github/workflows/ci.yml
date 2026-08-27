@@ -20,12 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # dtolnay/rust-toolchain@stable installs current stable on every
-      # runner, which is what keeps edition-2024 builds working uniformly;
-      # a runner's preinstalled toolchain can lag behind.
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # No pinned channel here on purpose: @master with no `toolchain`
+      # input makes the action read rust-toolchain.toml, so CI and local
+      # dev resolve to the exact same rustc/clippy version. A clippy lint
+      # that only one side sees is the failure mode this prevents.
+      - uses: dtolnay/rust-toolchain@master
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
@@ -41,7 +40,8 @@ jobs:
         os: [windows-latest, ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      # Reads rust-toolchain.toml (see the lint job).
+      - uses: dtolnay/rust-toolchain@master
       - uses: Swatinem/rust-cache@v2
       # --locked: CI tests exactly what the committed Cargo.lock resolved,
       # not whatever crates.io serves that day. The manifest's `=` pins and
