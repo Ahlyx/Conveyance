@@ -43,6 +43,10 @@ pub enum ConveyanceError {
     HandshakeFailed,
     #[error("Peer identity does not match the stored pairing. Re-pairing is required.")]
     PeerIdentityMismatch,
+    #[error("No paired phone. Run `conveyance pair` first.")]
+    PhoneNotPaired,
+    #[error("A signed response from the phone could not be verified.")]
+    SignatureVerificationFailed,
     #[error("Executed payload does not match the approved payload.")]
     ApprovalMismatch,
     #[error("No credentials are stored for the requested service.")]
@@ -66,6 +70,8 @@ impl ConveyanceError {
             Self::SessionEnded => "conveyance/session_ended",
             Self::HandshakeFailed => "conveyance/handshake_failed",
             Self::PeerIdentityMismatch => "conveyance/peer_identity_mismatch",
+            Self::PhoneNotPaired => "conveyance/phone_not_paired",
+            Self::SignatureVerificationFailed => "conveyance/signature_verification_failed",
             Self::ApprovalMismatch => "conveyance/approval_mismatch",
             Self::ServiceUnknown => "conveyance/service_unknown",
             Self::MessageTooLarge => "conveyance/message_too_large",
@@ -85,6 +91,8 @@ impl ConveyanceError {
             Self::ApprovalDenied
             | Self::HandshakeFailed
             | Self::PeerIdentityMismatch
+            | Self::PhoneNotPaired
+            | Self::SignatureVerificationFailed
             | Self::ApprovalMismatch
             | Self::ServiceUnknown
             | Self::MessageTooLarge
@@ -163,6 +171,16 @@ mod tests {
                 false,
             ),
             (
+                ConveyanceError::PhoneNotPaired,
+                "conveyance/phone_not_paired",
+                false,
+            ),
+            (
+                ConveyanceError::SignatureVerificationFailed,
+                "conveyance/signature_verification_failed",
+                false,
+            ),
+            (
                 ConveyanceError::ApprovalMismatch,
                 "conveyance/approval_mismatch",
                 false,
@@ -216,6 +234,7 @@ mod tests {
         for err in [
             ConveyanceError::HandshakeFailed,
             ConveyanceError::PeerIdentityMismatch,
+            ConveyanceError::SignatureVerificationFailed,
         ] {
             let msg = err.to_string().to_lowercase();
             for leaked in ["key", "signature", "curve", "mac", "nonce"] {

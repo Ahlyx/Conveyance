@@ -133,16 +133,10 @@ impl OpError {
         )
     }
 
-    /// No pairing exists. The spec's session-start section names this
-    /// case `PhoneNotPaired`, but the error-model table -- the surface
-    /// clients parse -- defines no such code, so it rides the nearest
-    /// defined one. The distinction survives in the message text.
+    /// No pairing exists -- distinct from `phone_unreachable` (a phone IS
+    /// paired but could not be reached). Code owned by the core enum.
     fn no_pairing() -> Self {
-        Self::new(
-            "conveyance/phone_unreachable",
-            "No paired phone. Run `conveyance pair` first.",
-            true,
-        )
+        Self::from_core(ConveyanceError::PhoneNotPaired)
     }
 
     fn internal(context: &str) -> Self {
@@ -945,10 +939,8 @@ impl Owner {
         // it verifies against the identity this session authenticated.
         if rsp.verify_signature(&parts.phone_id_pub).is_err() {
             self.note("approval_signature_invalid");
-            let _ = flight.reply.send(Err(OpError::new(
-                "conveyance/internal",
-                "phone response rejected",
-                false,
+            let _ = flight.reply.send(Err(OpError::from_core(
+                ConveyanceError::SignatureVerificationFailed,
             )));
             return false;
         }
@@ -1108,10 +1100,8 @@ impl Owner {
     ) -> bool {
         if rsp.verify_signature(&parts.phone_id_pub).is_err() {
             self.note("execute_signature_invalid");
-            let _ = flight.reply.send(Err(OpError::new(
-                "conveyance/internal",
-                "phone response rejected",
-                false,
+            let _ = flight.reply.send(Err(OpError::from_core(
+                ConveyanceError::SignatureVerificationFailed,
             )));
             return false;
         }

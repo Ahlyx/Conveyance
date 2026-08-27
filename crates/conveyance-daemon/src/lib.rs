@@ -1070,6 +1070,28 @@ mod tests {
         }
     }
 
+    /// Starting a session with no pairing on record is
+    /// `conveyance/phone_not_paired` -- distinct from `phone_unreachable`
+    /// (which means a phone IS paired but did not answer) -- and not
+    /// retryable without running `conveyance pair`.
+    #[tokio::test]
+    async fn session_start_without_pairing_is_phone_not_paired() {
+        let d = spawn_daemon_unpaired("no-pairing").await;
+
+        match single_request(&d.config.socket, IpcRequest::SessionStart)
+            .await
+            .unwrap()
+        {
+            IpcResponse::Error {
+                code, retryable, ..
+            } => {
+                assert_eq!(code, "conveyance/phone_not_paired");
+                assert!(!retryable, "pairing is a setup step, not a retry");
+            }
+            other => panic!("expected phone_not_paired, got {other:?}"),
+        }
+    }
+
     /// Exit criterion: "Session start/end via IPC reach ACTIVE /
     /// NO_SESSION against the mock phone" plus log durability of both
     /// transitions.
@@ -1507,10 +1529,15 @@ mod routing_tests {
 
         match single_request(&d.config.socket, auth_req()).await.unwrap() {
             IpcResponse::Error {
-                code, retryable, ..
+                code,
+                retryable,
+                message,
             } => {
-                assert_eq!(code, "conveyance/internal");
+                assert_eq!(code, "conveyance/signature_verification_failed");
                 assert!(!retryable);
+                // Generic by mandate: no field or check named.
+                let m = message.to_lowercase();
+                assert!(!m.contains("signature") && !m.contains("key"), "{message}");
             }
             other => panic!("expected rejection, got {other:?}"),
         }
