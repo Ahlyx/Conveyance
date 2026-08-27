@@ -37,7 +37,7 @@
 
 use serde::Deserialize;
 
-use crate::crypto::canonical_json::canonicalize;
+use crate::crypto::canonical_json::{canonicalize, to_canonical_string};
 use crate::crypto::sign::{IdentityPublicKey, IdentitySecretKey};
 use crate::crypto::{hex_decode_array, hex_encode};
 
@@ -152,13 +152,13 @@ pub fn parse_phone_export(text: &str) -> Result<Vec<PhoneLogRow>, ExportParseErr
 /// The canonical bytes a phone-log signature covers:
 /// `"conveyance-phone-log-v1" || canonical_json(minus signature)`.
 fn phone_row_signing_payload(row: &PhoneLogRow) -> Result<Vec<u8>, String> {
-    let value = serde_json::json!({
+    let canonical = to_canonical_string(&serde_json::json!({
         "req_id": hex_encode(&row.req_id),
         "event_type": row.event_type,
         "payload_json": row.payload_json,
         "timestamp": row.timestamp,
-    });
-    let canonical = canonicalize(&value).map_err(|e| e.to_string())?;
+    }))
+    .map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(PHONE_LOG_CONTEXT.len() + canonical.len());
     out.extend_from_slice(PHONE_LOG_CONTEXT);
     out.extend_from_slice(canonical.as_bytes());

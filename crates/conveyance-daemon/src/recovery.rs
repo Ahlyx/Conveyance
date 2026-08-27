@@ -69,7 +69,7 @@ pub fn sweep_orphaned_requests(
             "reason": CRASHED_BEFORE_TERMINAL,
             "orphaned_after": last_type,
         });
-        let payload_json = conveyance_core::crypto::canonical_json::canonicalize(&payload)
+        let payload_json = conveyance_core::crypto::canonical_json::to_canonical_string(&payload)
             .unwrap_or_else(|_| payload.to_string());
         log.append(&LogEvent {
             req_id,

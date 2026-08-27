@@ -21,6 +21,7 @@
 //! exactly instead of degrading to doubles. The Android side MUST apply
 //! the same rules; see CONVEYANCE_SPEC.md "Cryptographic primitives".
 
+use serde::Serialize;
 use serde_json::Value;
 
 use super::CryptoError;
@@ -31,6 +32,19 @@ pub fn canonicalize(value: &Value) -> Result<String, CryptoError> {
     let mut out = String::new();
     write_value(value, &mut out)?;
     Ok(out)
+}
+
+/// Canonicalize any `Serialize` value in one step: `serde_json::to_value`
+/// then [`canonicalize`]. Every signed message, the approval/execute
+/// binding comparison, and the phone-log signature payload go through
+/// here, so identical content produces identical bytes no matter which
+/// module builds it -- the property signatures depend on for portability
+/// across the Rust and Android sides. A value that cannot become JSON at
+/// all (only exotic `Serialize` impls) is reported as outside the
+/// canonical domain, same as a float.
+pub fn to_canonical_string<T: Serialize>(value: &T) -> Result<String, CryptoError> {
+    let json = serde_json::to_value(value).map_err(|_| CryptoError::OutsideCanonicalDomain)?;
+    canonicalize(&json)
 }
 
 fn write_value(value: &Value, out: &mut String) -> Result<(), CryptoError> {
@@ -258,5 +272,65 @@ mod tests {
         });
         let expected = r#"{"a":{"y":{"k":null},"z":[]},"b":[[],[1,[true]],{}]}"#;
         assert_eq!(canonicalize(&input).unwrap(), expected);
+    }
+
+    /// The property signatures rely on: the same content canonicalizes to
+    /// the same bytes no matter which caller (or field order, or nesting
+    /// path) built it. A struct whose fields are declared out of sorted
+    /// order must produce exactly the bytes of the equivalent map.
+    #[test]
+    fn to_canonical_string_is_caller_independent() {
+        #[derive(Serialize)]
+        struct Msg {
+            zeta: i64,
+            alpha: Nested,
+            req_id: &'static str,
+        }
+        #[derive(Serialize)]
+        struct Nested {
+            y: bool,
+            x: &'static str,
+        }
+
+        let via_struct = to_canonical_string(&Msg {
+            zeta: 7,
+            alpha: Nested { y: true, x: "hi" },
+            req_id: "deadbeef",
+        })
+        .unwrap();
+
+        let via_value = to_canonical_string(&json!({
+            "req_id": "deadbeef",
+            "alpha": {"x": "hi", "y": true},
+            "zeta": 7,
+        }))
+        .unwrap();
+
+        let expected = r#"{"alpha":{"x":"hi","y":true},"req_id":"deadbeef","zeta":7}"#;
+        assert_eq!(via_struct, expected);
+        assert_eq!(via_value, expected);
+        // And it agrees with the two-step form it replaces.
+        assert_eq!(
+            via_struct,
+            canonicalize(
+                &serde_json::to_value(
+                    json!({"zeta":7,"req_id":"deadbeef","alpha":{"y":true,"x":"hi"}})
+                )
+                .unwrap()
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn to_canonical_string_rejects_float_fields() {
+        #[derive(Serialize)]
+        struct HasFloat {
+            n: f64,
+        }
+        assert!(matches!(
+            to_canonical_string(&HasFloat { n: 0.5 }),
+            Err(CryptoError::OutsideCanonicalDomain)
+        ));
     }
 }

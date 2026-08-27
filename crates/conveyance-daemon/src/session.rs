@@ -732,13 +732,14 @@ impl Owner {
         });
     }
 
-    /// Canonical-JSON log row tied to a specific req_id. Payloads are
-    /// built through `canonicalize` so PC rows compare byte-for-byte
-    /// with phone rows during phase 9 diffing -- a plain `to_string()`
-    /// would serialize maps in insertion order and quietly break that.
+    /// Canonical-JSON log row tied to a specific req_id. Payloads go
+    /// through `to_canonical_string` -- the same helper the wire
+    /// signatures use -- so PC rows compare byte-for-byte with phone rows
+    /// during phase 9 diffing; a plain `to_string()` would serialize maps
+    /// in insertion order and quietly break that.
     fn log_req(&self, req_id: wire::ReqId, event_type: &str, payload: serde_json::Value) {
-        use conveyance_core::crypto::canonical_json::canonicalize;
-        let payload_json = canonicalize(&payload).unwrap_or_else(|_| payload.to_string());
+        use conveyance_core::crypto::canonical_json::to_canonical_string;
+        let payload_json = to_canonical_string(&payload).unwrap_or_else(|_| payload.to_string());
         let _ = self.deps.log.append(&LogEvent {
             req_id: req_id.0,
             event_type: event_type.into(),

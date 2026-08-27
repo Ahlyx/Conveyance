@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use super::ProtocolError;
 use super::message::{ApprovalRequest, ApprovalResponse, ExecuteRequest};
+use crate::crypto::canonical_json::to_canonical_string;
 
 /// Spec: at most 5 minutes between approval and execution.
 pub const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(300);
@@ -77,7 +78,7 @@ impl ApprovedRequestTracker {
         // Re-approval of a still-pending id replaces the old approval
         // (fresh timestamps, fresh user intent). Tombstone state is only
         // relevant after consumption.
-        let json = canonical_request_json(request)?;
+        let json = to_canonical_string(request)?;
         let id = request.req_id.hex();
         self.pending.insert(
             id,
@@ -120,7 +121,7 @@ impl ApprovedRequestTracker {
                     });
                 }
 
-                let exec_json = canonical_execute_json(exec)?;
+                let exec_json = to_canonical_string(exec)?;
                 if exec_json == entry.approved_json {
                     self.consumed.insert(id, Instant::now());
                     Ok(())
@@ -143,16 +144,6 @@ impl ApprovedRequestTracker {
         self.consumed
             .retain(|_, consumed_at| consumed_at.elapsed() <= self.ttl * 2);
     }
-}
-
-fn canonical_request_json(request: &ApprovalRequest) -> Result<String, ProtocolError> {
-    let value = serde_json::to_value(request).map_err(|e| ProtocolError::Cbor(e.to_string()))?;
-    Ok(crate::crypto::canonical_json::canonicalize(&value)?)
-}
-
-fn canonical_execute_json(exec: &ExecuteRequest) -> Result<String, ProtocolError> {
-    let value = serde_json::to_value(exec).map_err(|e| ProtocolError::Cbor(e.to_string()))?;
-    Ok(crate::crypto::canonical_json::canonicalize(&value)?)
 }
 
 #[cfg(test)]
