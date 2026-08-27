@@ -269,9 +269,9 @@ impl Command {
             } => daemon(config, socket, data_dir, mock_phone)
                 .await
                 .map_err(CliError::from),
-            Command::Status { socket } => {
-                status(client_socket(socket)?).await.map_err(CliError::from)
-            }
+            Command::Status { socket } => status(conveyance_daemon::resolve_client_socket(socket)?)
+                .await
+                .map_err(CliError::from),
             Command::Session { cmd } => match cmd {
                 SessionCommand::Start { socket } => session_cmd(
                     conveyance_daemon::ipc::IpcRequest::SessionStart,
@@ -289,7 +289,7 @@ impl Command {
                 .map_err(CliError::from),
             },
             Command::McpShim { socket } => {
-                let sock = client_socket(socket)?;
+                let sock = conveyance_daemon::resolve_client_socket(socket)?;
                 conveyance_shim::run(&sock).await.map_err(CliError::from)
             }
             Command::Unpair {
@@ -368,16 +368,6 @@ impl Command {
     }
 }
 
-/// Resolve the socket a client command should dial: the flag wins,
-/// otherwise the configured/default identity from the daemon lib.
-fn client_socket(flag: Option<String>) -> Result<String, String> {
-    if let Some(s) = flag {
-        return Ok(s);
-    }
-    let raw = conveyance_daemon::load_config_or_defaults()?;
-    Ok(conveyance_daemon::effective_socket(&raw))
-}
-
 fn init_identity(data_dir_override: Option<std::path::PathBuf>) -> Result<(), String> {
     let path = data_paths(data_dir_override)?.identity;
     // load_or_create_identity prints generation progress itself.
@@ -421,27 +411,13 @@ fn unpair(
     }
 }
 
-fn load_daemon_config(
-    config_path: Option<std::path::PathBuf>,
-) -> Result<conveyance_daemon::DaemonConfig, String> {
-    let raw = match config_path {
-        Some(path) => conveyance_core::config::Config::load_from_path(&path)
-            .map_err(|e| format!("cannot load {}: {e}", path.display()))?,
-        None => conveyance_daemon::load_config_or_defaults()?,
-    };
-    conveyance_daemon::resolve_config(&raw).map_err(|e| e.to_string())
-}
-
 async fn daemon(
     config_path: Option<std::path::PathBuf>,
     socket: Option<String>,
     data_dir: Option<std::path::PathBuf>,
     mock_phone: bool,
 ) -> Result<(), String> {
-    let mut config = load_daemon_config(config_path)?;
-    if let Some(s) = socket {
-        config.socket = s;
-    }
+    let mut config = conveyance_daemon::resolve_runtime_config(config_path.as_deref(), socket)?;
     // Storage redirection happens AFTER resolution so every derived
     // path moves together -- a daemon must never straddle two data
     // directories.
@@ -516,7 +492,7 @@ async fn session_cmd(
 ) -> Result<(), String> {
     use conveyance_daemon::ipc::{IpcResponse, single_request};
 
-    let socket = client_socket(socket)?;
+    let socket = conveyance_daemon::resolve_client_socket(socket)?;
     match single_request(&socket, req).await {
         Ok(IpcResponse::Error { code, message, .. }) => {
             // Spec error shape reaches CLI users verbatim: code first,

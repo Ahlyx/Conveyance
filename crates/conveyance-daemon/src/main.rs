@@ -28,41 +28,17 @@ fn main() {
         }
     }
 
+    let config = match conveyance_daemon::resolve_runtime_config(config_path.as_deref(), socket) {
+        Ok(c) => c,
+        Err(e) => die(&e),
+    };
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap_or_else(|e| die(&format!("cannot start async runtime: {e}")));
 
     let code = runtime.block_on(async move {
-        let raw = if let Some(path) = config_path {
-            match conveyance_core::config::Config::load_from_path(&path) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("cannot load {}: {e}", path.display());
-                    return 1;
-                }
-            }
-        } else {
-            match conveyance_daemon::load_config_or_defaults() {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("{e}");
-                    return 1;
-                }
-            }
-        };
-
-        let mut config = match conveyance_daemon::resolve_config(&raw) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        };
-        if let Some(s) = socket {
-            config.socket = s;
-        }
-
         match conveyance_daemon::run(config).await {
             Ok(()) => 0,
             Err(e) => {

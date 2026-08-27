@@ -167,6 +167,38 @@ pub fn load_config_or_defaults() -> Result<conveyance_core::config::Config, Stri
         .map_err(|e| format!("cannot load {}: {e}", path.display()))
 }
 
+/// Resolve a runnable [`DaemonConfig`] from an optional explicit config
+/// path and an optional socket override. This is the load -> resolve ->
+/// override-socket sequence shared by the `conveyance daemon` subcommand
+/// and the standalone `conveyance-daemon` binary; neither should
+/// re-implement it. The CLI's `--data-dir` redirection, if any, is
+/// applied by the caller afterwards.
+pub fn resolve_runtime_config(
+    config_path: Option<&Path>,
+    socket_override: Option<String>,
+) -> Result<DaemonConfig, String> {
+    let raw = match config_path {
+        Some(path) => conveyance_core::config::Config::load_from_path(path)
+            .map_err(|e| format!("cannot load {}: {e}", path.display()))?,
+        None => load_config_or_defaults()?,
+    };
+    let mut config = resolve_config(&raw).map_err(|e| e.to_string())?;
+    if let Some(s) = socket_override {
+        config.socket = s;
+    }
+    Ok(config)
+}
+
+/// The daemon socket a client (CLI subcommand or `conveyance-mcp-shim`
+/// binary) should dial: an explicit `--socket` wins, otherwise the
+/// configured or default identity.
+pub fn resolve_client_socket(socket_override: Option<String>) -> Result<String, String> {
+    match socket_override {
+        Some(s) => Ok(s),
+        None => Ok(effective_socket(&load_config_or_defaults()?)),
+    }
+}
+
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         let home = std::env::var("USERPROFILE")

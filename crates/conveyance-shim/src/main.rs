@@ -3,8 +3,7 @@
 //! library so the `conveyance mcp-shim` CLI subcommand and this bin
 //! are the same code.
 
-use conveyance_daemon::effective_socket;
-use conveyance_daemon::load_config_or_defaults;
+use conveyance_daemon::resolve_client_socket;
 
 fn main() {
     if std::env::args().any(|arg| arg == "-V" || arg == "--version") {
@@ -26,11 +25,8 @@ fn main() {
         }
     }
 
-    let socket = socket.unwrap_or_else(|| {
-        load_config_or_defaults()
-            .map(|cfg| effective_socket(&cfg))
-            .unwrap_or_else(|e| die(&format!("cannot resolve daemon socket: {e}")))
-    });
+    let socket = resolve_client_socket(socket)
+        .unwrap_or_else(|e| die(&format!("cannot resolve daemon socket: {e}")));
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
