@@ -59,15 +59,16 @@ pub fn hkdf_blake2s(ikm: Vec<u8>, info: Vec<u8>, length: u32) -> Result<Vec<u8>,
 mod tests {
     use super::*;
 
-    /// Known-answer vector for the spike, shared verbatim with the
-    /// Kotlin instrumented test (`HkdfBlake2sSpikeTest`). BLAKE2s has no
-    /// official HKDF vectors (see `conveyance-crypto`'s hkdf module
-    /// docs), so this value is anchored to the Rust implementation: if
-    /// the Kotlin binding reproduces it, the FFI path is faithful.
-    const SPIKE_IKM: &[u8] = b"conveyance hkdf-blake2s spike";
-    const SPIKE_INFO: &[u8] = b"spike-vector-v1";
+    /// The same known-answer vector pinned by
+    /// `conveyance_crypto::hkdf::tests::blake2s_known_answer` and asserted
+    /// again by the Kotlin instrumented test (`HkdfBlake2sSpikeTest`):
+    /// one anchor, checked on every layer of the bridge. BLAKE2s has no
+    /// official HKDF vectors, so the value is fixed to the Rust
+    /// implementation — reproducing it is what "faithful" means here.
+    const SPIKE_IKM: &[u8] = &[0x5a; 64];
+    const SPIKE_INFO: &[u8] = b"conveyance-v1-identity-ed25519";
     const SPIKE_OKM_32_HEX: &str =
-        "3b0d11d95126c099d16717960a07423b60ac5705b7d0615aa9d7ab7065badcca";
+        "076cd99ded0d8b7bd6a6d87fd944e1ac7f52f81fa20489b68bc70ed07febfe3a";
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()

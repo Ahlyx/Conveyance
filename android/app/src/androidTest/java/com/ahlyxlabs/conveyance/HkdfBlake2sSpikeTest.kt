@@ -19,19 +19,20 @@ import uniffi.conveyance_crypto_ffi.hkdfBlake2s
  * -> JNA -> Kotlin -> emulator — works end to end and the full 10.1
  * crypto surface can follow.
  *
- * The vector is shared verbatim with the Rust test
- * `conveyance_crypto_ffi::tests::hkdf_blake2s_matches_known_answer`.
+ * The vector is the one pinned by
+ * `conveyance_crypto::hkdf::tests::blake2s_known_answer` and re-checked
+ * by `conveyance_crypto_ffi::tests::hkdf_blake2s_matches_known_answer`.
  * BLAKE2s has no official HKDF vectors, so the anchor is the Rust
  * implementation itself: matching it proves the FFI path is faithful.
  */
 @RunWith(AndroidJUnit4::class)
 class HkdfBlake2sSpikeTest {
 
-    private val ikm = "conveyance hkdf-blake2s spike".toByteArray(Charsets.US_ASCII)
-    private val info = "spike-vector-v1".toByteArray(Charsets.US_ASCII)
+    private val ikm = ByteArray(64) { 0x5a }
+    private val info = "conveyance-v1-identity-ed25519".toByteArray(Charsets.US_ASCII)
 
     private val expectedOkm32 =
-        "3b0d11d95126c099d16717960a07423b60ac5705b7d0615aa9d7ab7065badcca".hexToByteArray()
+        "076cd99ded0d8b7bd6a6d87fd944e1ac7f52f81fa20489b68bc70ed07febfe3a".hexToByteArray()
 
     @Test
     fun hkdfBlake2sMatchesRustKnownAnswer() {

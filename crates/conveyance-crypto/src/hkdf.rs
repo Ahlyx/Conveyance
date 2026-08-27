@@ -228,6 +228,39 @@ mod tests {
         );
     }
 
+    /// Known-answer anchor for HKDF-BLAKE2s. No official vector exists
+    /// (module docs), so these bytes are pinned to this implementation:
+    /// the value here is what a second implementation (the Android
+    /// UniFFI bridge, `conveyance-crypto-ffi`, and any future Kotlin
+    /// port) must reproduce to be considered faithful. The inputs are
+    /// the spec's two identity info strings plus one multi-block length,
+    /// over a fixed all-`0x5a` seed.
+    #[test]
+    fn blake2s_known_answer() {
+        let seed = [0x5au8; 64];
+        let cases: [(&[u8], &str); 3] = [
+            (
+                b"conveyance-v1-identity-ed25519",
+                "076cd99ded0d8b7bd6a6d87fd944e1ac7f52f81fa20489b68bc70ed07febfe3a",
+            ),
+            (
+                b"conveyance-v1-identity-x25519",
+                "94715914b10fb858218fbf60f76acaedcb74f46aed45a336c76975b24a0abfad",
+            ),
+            (
+                b"length probe",
+                "3c2b15a4c4b825f38dcf1c1474ba208ac38349defe6d2d8c21a01bb2bb7cf98c7\
+                 39f6d5113e9b99e48213d2c4847144679fcff93eba4793af62d0e0731da5734",
+            ),
+        ];
+        for (info, want) in cases {
+            let want = hex(want);
+            let mut got = vec![0u8; want.len()];
+            hkdf_blake2s(&seed, info, &mut got);
+            assert_eq!(got, want, "HKDF-BLAKE2s KAT drift for info {info:?}");
+        }
+    }
+
     /// BLAKE2s instantiation has no official vectors (see module docs);
     /// what IS pinned here: determinism, info sensitivity, correct
     /// multi-round/partial-final expansion mechanics on the production
