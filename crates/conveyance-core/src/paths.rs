@@ -12,7 +12,7 @@
 //! that are easy to get subtly wrong and invisible until someone's home
 //! directory is not where you assumed.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
@@ -53,6 +53,41 @@ pub fn data_dir() -> Result<PathBuf, PathError> {
     base.map(|dir| dir.join("conveyance"))
 }
 
+/// The three on-disk artifacts the daemon and the CLI both address, under
+/// one data directory. Filenames are fixed by the spec's "Storage
+/// layout" section; this is the single place they are spelled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataPaths {
+    /// `identity.enc` -- the encrypted long-term PC identity.
+    pub identity: PathBuf,
+    /// `pairings.db` -- paired-phone registry.
+    pub pairings: PathBuf,
+    /// `executions.db` -- hash-chained execution log.
+    pub executions: PathBuf,
+}
+
+impl DataPaths {
+    /// The three paths under an explicit directory (a `--data-dir`
+    /// override, or a test's temp dir).
+    pub fn under(dir: &Path) -> Self {
+        Self {
+            identity: dir.join("identity.enc"),
+            pairings: dir.join("pairings.db"),
+            executions: dir.join("executions.db"),
+        }
+    }
+
+    /// Resolve under `base` when given, otherwise under the platform
+    /// [`data_dir`].
+    pub fn resolve(base: Option<PathBuf>) -> Result<Self, PathError> {
+        let dir = match base {
+            Some(d) => d,
+            None => data_dir()?,
+        };
+        Ok(Self::under(&dir))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +118,24 @@ mod tests {
         let dir = data_dir().unwrap();
         let local = std::env::var("LOCALAPPDATA").expect("LOCALAPPDATA set on Windows");
         assert!(dir.starts_with(local), "{dir:?} not under LOCALAPPDATA");
+    }
+
+    #[test]
+    fn data_paths_use_the_spec_filenames() {
+        let dp = DataPaths::under(std::path::Path::new("/base"));
+        assert_eq!(dp.identity.file_name().unwrap(), "identity.enc");
+        assert_eq!(dp.pairings.file_name().unwrap(), "pairings.db");
+        assert_eq!(dp.executions.file_name().unwrap(), "executions.db");
+
+        // resolve(Some(..)) is just under() with the override.
+        assert_eq!(
+            DataPaths::resolve(Some("/base".into())).unwrap(),
+            DataPaths::under(std::path::Path::new("/base"))
+        );
+        // resolve(None) lands under the platform data dir.
+        assert_eq!(
+            DataPaths::resolve(None).unwrap().pairings,
+            data_dir().unwrap().join("pairings.db")
+        );
     }
 }

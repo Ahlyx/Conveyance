@@ -21,11 +21,12 @@ async fn spawn_mock_daemon(tag: &str) -> (tempfile::TempDir, DaemonConfig) {
     let keys = MockKeyProvider::default();
 
     let pc_identity = StoredIdentity::generate(&conveyance_core::crypto::OsEntropy).unwrap();
+    let dp = conveyance_core::paths::DataPaths::under(dir.path());
     let config = DaemonConfig {
         socket: format!("conveyance-shim-test-{}-{tag}", std::process::id()),
-        pairings_db: dir.path().join("pairings.db"),
-        executions_db: dir.path().join("executions.db"),
-        identity_file: dir.path().join("identity.enc"),
+        pairings_db: dp.pairings,
+        executions_db: dp.executions,
+        identity_file: dp.identity,
         session_params: SessionParams::validated(
             SessionParams::IDLE_MIN,
             std::time::Duration::from_secs(60),

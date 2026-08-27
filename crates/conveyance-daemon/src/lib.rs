@@ -130,7 +130,7 @@ pub fn resolve_config(raw: &conveyance_core::config::Config) -> Result<DaemonCon
     // malformed high-risk rules, then the timer bounds below.
     raw.validated()
         .map_err(|e| StartupError::Config(e.to_string()))?;
-    let data = conveyance_core::paths::data_dir()?;
+    let paths = conveyance_core::paths::DataPaths::resolve(None)?;
     let session_params = SessionParams::validated(
         Duration::from_secs(raw.session.idle_timeout_seconds),
         Duration::from_secs(raw.session.warn_before_seconds),
@@ -140,12 +140,14 @@ pub fn resolve_config(raw: &conveyance_core::config::Config) -> Result<DaemonCon
 
     Ok(DaemonConfig {
         socket: effective_socket(raw),
-        pairings_db: data.join("pairings.db"),
+        pairings_db: paths.pairings,
+        // `logging.executions_db` in config.toml overrides the default
+        // location for the log specifically.
         executions_db: match &raw.logging.executions_db {
             Some(p) => expand_tilde(p),
-            None => data.join("executions.db"),
+            None => paths.executions,
         },
-        identity_file: data.join("identity.enc"),
+        identity_file: paths.identity,
         session_params,
     })
 }
@@ -666,9 +668,10 @@ pub(crate) mod test_support {
         let dir = tempfile::tempdir().unwrap();
         let keys = Arc::new(MockKeyProvider::new());
 
+        let dp = conveyance_core::paths::DataPaths::under(dir.path());
         let pc_identity = StoredIdentity::generate(&OsEntropy).unwrap();
         pc_identity
-            .save(&dir.path().join("identity.enc"), keys.as_ref(), &OsEntropy)
+            .save(&dp.identity, keys.as_ref(), &OsEntropy)
             .unwrap();
 
         // Phone identity halves. The X25519 secret stays on the phone;
@@ -679,9 +682,9 @@ pub(crate) mod test_support {
 
         let config = DaemonConfig {
             socket: unique_socket(tag),
-            pairings_db: dir.path().join("pairings.db"),
-            executions_db: dir.path().join("executions.db"),
-            identity_file: dir.path().join("identity.enc"),
+            pairings_db: dp.pairings,
+            executions_db: dp.executions,
+            identity_file: dp.identity.clone(),
             session_params: test_params(),
         };
 
@@ -1223,11 +1226,12 @@ mod tests {
         let mut keys = MockKeyProvider::new();
 
         let identity = StoredIdentity::generate(&OsEntropy).unwrap();
+        let dp = conveyance_core::paths::DataPaths::under(dir.path());
         let config = DaemonConfig {
             socket: test_support::unique_socket_pub("refuse-kc"),
-            pairings_db: dir.path().join("pairings.db"),
-            executions_db: dir.path().join("executions.db"),
-            identity_file: dir.path().join("identity.enc"),
+            pairings_db: dp.pairings,
+            executions_db: dp.executions,
+            identity_file: dp.identity,
             session_params: test_support::pub_test_params(),
         };
         identity
@@ -1261,14 +1265,14 @@ mod tests {
         let keys = MockKeyProvider::new();
 
         let identity = StoredIdentity::generate(&OsEntropy).unwrap();
-        let executions = dir.path().join("executions.db");
-        std::fs::create_dir_all(&executions).unwrap(); // sabotage
+        let dp = conveyance_core::paths::DataPaths::under(dir.path());
+        std::fs::create_dir_all(&dp.executions).unwrap(); // sabotage
 
         let config = DaemonConfig {
             socket: test_support::unique_socket_pub("refuse-db"),
-            pairings_db: dir.path().join("pairings.db"),
-            executions_db: executions.clone(),
-            identity_file: dir.path().join("identity.enc"),
+            pairings_db: dp.pairings,
+            executions_db: dp.executions,
+            identity_file: dp.identity,
             session_params: test_support::pub_test_params(),
         };
         identity
@@ -1576,11 +1580,12 @@ mod routing_tests {
         let dir = tempfile::tempdir().unwrap();
         let keys = test_support::MockKeyProvider::new();
         let pc_identity = StoredIdentity::generate(&OsEntropy).unwrap();
+        let dp = conveyance_core::paths::DataPaths::under(dir.path());
         let config = DaemonConfig {
             socket: test_support::unique_socket_pub("crash-sweep"),
-            pairings_db: dir.path().join("pairings.db"),
-            executions_db: dir.path().join("executions.db"),
-            identity_file: dir.path().join("identity.enc"),
+            pairings_db: dp.pairings,
+            executions_db: dp.executions,
+            identity_file: dp.identity,
             session_params: test_support::pub_test_params(),
         };
         pc_identity

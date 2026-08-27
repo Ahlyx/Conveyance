@@ -178,8 +178,14 @@ enum Init {
     },
 }
 
-fn data_dir() -> Result<std::path::PathBuf, String> {
-    conveyance_core::paths::data_dir().map_err(|e| e.to_string())
+/// The daemon's data-file set for a CLI command: honours a `--data-dir`
+/// override, otherwise the platform data directory. Single source of the
+/// `identity.enc` / `pairings.db` / `executions.db` filenames -- see
+/// [`conveyance_core::paths::DataPaths`].
+fn data_paths(
+    over: Option<std::path::PathBuf>,
+) -> Result<conveyance_core::paths::DataPaths, String> {
+    conveyance_core::paths::DataPaths::resolve(over).map_err(|e| e.to_string())
 }
 
 // Used only by the BLE pairing flow; kept compiled so a --features ble
@@ -307,14 +313,18 @@ impl Command {
                         verbose,
                         anomalous,
                     },
-                    resolve_executions_db(data_dir)?,
+                    data_paths(data_dir).map_err(CliError::fail)?.executions,
                 ),
                 LogCommand::Verify {
                     repair,
                     yes,
                     data_dir,
-                } => logcmd::verify(repair, yes, resolve_executions_db(data_dir)?)
-                    .map_err(|e| CliError::with_code(e.code, e.message)),
+                } => logcmd::verify(
+                    repair,
+                    yes,
+                    data_paths(data_dir).map_err(CliError::fail)?.executions,
+                )
+                .map_err(|e| CliError::with_code(e.code, e.message)),
                 LogCommand::Export {
                     format,
                     output,
@@ -337,19 +347,19 @@ impl Command {
                             anomalous: false,
                         },
                         output,
-                        resolve_executions_db(data_dir)?,
+                        data_paths(data_dir).map_err(CliError::fail)?.executions,
                     )
                 }
                 LogCommand::Diff {
                     phone_export,
                     data_dir,
                 } => {
-                    let paths = resolve_pairings_and_executions(data_dir)?;
+                    let dp = data_paths(data_dir).map_err(CliError::fail)?;
                     logcmd::diff(
                         &phone_export,
                         logcmd::DiffPaths {
-                            pairings_db: paths.0,
-                            executions_db: paths.1,
+                            pairings_db: dp.pairings,
+                            executions_db: dp.executions,
                         },
                     )
                 }
@@ -369,40 +379,10 @@ fn client_socket(flag: Option<String>) -> Result<String, String> {
 }
 
 fn init_identity(data_dir_override: Option<std::path::PathBuf>) -> Result<(), String> {
-    let dir = match data_dir_override {
-        Some(d) => d,
-        None => data_dir()?,
-    };
-    let path = dir.join("identity.enc");
+    let path = data_paths(data_dir_override)?.identity;
     // load_or_create_identity prints generation progress itself.
     let _identity = load_or_create_identity(&path)?;
     Ok(())
-}
-
-/// Storage paths for local-DB commands: the override wins so tests and
-/// multi-instance setups never touch the platform directory.
-fn resolve_executions_db(
-    data_dir: Option<std::path::PathBuf>,
-) -> Result<std::path::PathBuf, CliError> {
-    Ok(match data_dir {
-        Some(d) => d.join("executions.db"),
-        None => conveyance_core::paths::data_dir()
-            .map_err(|e| CliError::fail(e.to_string()))?
-            .join("executions.db"),
-    })
-}
-
-fn resolve_pairings_and_executions(
-    data_dir: Option<std::path::PathBuf>,
-) -> Result<(std::path::PathBuf, std::path::PathBuf), CliError> {
-    Ok(match data_dir {
-        Some(d) => (d.join("pairings.db"), d.join("executions.db")),
-        None => {
-            let base =
-                conveyance_core::paths::data_dir().map_err(|e| CliError::fail(e.to_string()))?;
-            (base.join("pairings.db"), base.join("executions.db"))
-        }
-    })
 }
 
 fn unpair(
@@ -410,10 +390,9 @@ fn unpair(
     yes: bool,
     data_dir_override: Option<std::path::PathBuf>,
 ) -> Result<(), CliError> {
-    let dir = match data_dir_override {
-        Some(d) => d,
-        None => data_dir().map_err(CliError::from)?,
-    };
+    let pairings_db = data_paths(data_dir_override)
+        .map_err(CliError::fail)?
+        .pairings;
     if !yes {
         // Non-interactive use without --yes is refused rather than
         // guessed: a revoked phone that keeps believing it is paired is
@@ -429,7 +408,7 @@ fn unpair(
         }
     }
 
-    let store = conveyance_core::storage::pairings::PairingsDb::open(&dir.join("pairings.db"))
+    let store = conveyance_core::storage::pairings::PairingsDb::open(&pairings_db)
         .map_err(|e| CliError::fail(e.to_string()))?;
     match store.remove(phone_id) {
         Ok(true) => {
@@ -467,9 +446,10 @@ async fn daemon(
     // path moves together -- a daemon must never straddle two data
     // directories.
     if let Some(dir) = data_dir {
-        config.pairings_db = dir.join("pairings.db");
-        config.executions_db = dir.join("executions.db");
-        config.identity_file = dir.join("identity.enc");
+        let dp = conveyance_core::paths::DataPaths::under(&dir);
+        config.pairings_db = dp.pairings;
+        config.executions_db = dp.executions;
+        config.identity_file = dp.identity;
     }
 
     match (mock_phone, cfg!(feature = "mock-phone")) {
@@ -556,16 +536,17 @@ async fn pair(name: Option<String>) -> Result<(), String> {
     use conveyance_core::pairing::{CeremonyContext, CeremonyLimits, NonceGuard, run_pairing};
     use conveyance_core::transport::ble::BleTransport;
 
-    let data = data_dir()?;
+    let dp = data_paths(None)?;
     let mut transport = BleTransport::new()
         .await
         .map_err(|e| format!("Bluetooth unavailable on this machine: {e}"))?;
 
-    let identity = load_or_create_identity(&data.join("identity.enc"))?;
+    let identity = load_or_create_identity(&dp.identity)?;
     let signer = identity.identity_key();
-    let store = conveyance_core::storage::pairings::PairingsDb::open(&data.join("pairings.db"))
+    let store = conveyance_core::storage::pairings::PairingsDb::open(&dp.pairings)
         .map_err(|e| e.to_string())?;
-    let mut nonces = NonceGuard::open(&data.join("pairing-nonce-bloom.bin"));
+    // The replay bloom filter sits alongside the other data files.
+    let mut nonces = NonceGuard::open(&dp.pairings.with_file_name("pairing-nonce-bloom.bin"));
 
     let mut ctx = CeremonyContext {
         pc_id_secret: &signer,
