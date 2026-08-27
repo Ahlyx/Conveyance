@@ -990,6 +990,22 @@ impl Owner {
                 false
             }
             Decision::Approved => {
+                // `approval_granted` is logged first, before the three
+                // steps below, and that ordering is correct: this row
+                // records a real event -- the user tapped approve and the
+                // phone signed it -- that is true regardless of whether
+                // the daemon can then build and send the execute. It is
+                // also safe with respect to the "approval_granted with no
+                // execute_sent = crash orphan" reading, because every
+                // failure arm between here and `execute_sent` is
+                // unreachable: `record_approval` only rejects a req_id
+                // mismatch (we just matched rsp.req_id to flight.req_id),
+                // `ExecuteRequest::new` only rejects non-canonical params
+                // (already domain-checked when the ApprovalRequest was
+                // built), and `validate_execute` compares byte-identical
+                // canonical JSON of two structs with the same field set.
+                // So an approval_granted row is always followed by
+                // execute_sent in practice; the guards are insurance.
                 self.log_req(
                     approval.req_id,
                     "approval_granted",
@@ -1002,9 +1018,8 @@ impl Owner {
                 );
 
                 if parts.binding.record_approval(&approval, rsp).is_err() {
-                    // record_approval only mismatches req_ids between
-                    // the pair we just matched -- unreachable, but a
-                    // loud refusal beats executing on bad state.
+                    // Unreachable (see the ordering note above); a loud
+                    // refusal still beats executing on bad state.
                     let _ = flight.reply.send(Err(OpError::internal("binding failure")));
                     return false;
                 }
