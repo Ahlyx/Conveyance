@@ -27,7 +27,7 @@ async fn handle_line(line: &str, socket: &str) -> Option<String> {
 
         Err((code, message)) => Some(rpc::error_response(&None, code, &message)),
 
-        Ok(rpc::Inbound::Notification { .. }) => {
+        Ok(rpc::Inbound::Notification) => {
             // notifications/initialized and friends: acknowledged by
             // the absence of a response, per JSON-RPC.
             None

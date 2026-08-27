@@ -3,7 +3,7 @@ name = "conveyance"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Conveyance CLI: pair, and later daemon/shim/log subcommands"
+description = "Conveyance CLI: init, pair, daemon, mcp-shim, status, session, unpair, and log subcommands"
 
 [[bin]]
 name = "conveyance"

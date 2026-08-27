@@ -674,11 +674,11 @@ impl Owner {
                 | Some(wire::WireMessage::Pong(_))
                 | Some(wire::WireMessage::PairingConfirm(_))
                 | Some(wire::WireMessage::PairingAck(_)) => {
-                    // Unsolicited traffic in these directions is not
-                    // part of the protocol as run today. Ignore-and-note
-                    // keeps a chatty or malicious peer from ending
-                    // sessions at will; phase 7.1 replaces this arm
-                    // with real routing.
+                    // Responses to routed requests are consumed by
+                    // try_complete_route above; anything reaching here is
+                    // traffic the phone has no reason to send unprompted.
+                    // Ignore-and-note keeps a chatty or malicious peer
+                    // from ending sessions at will.
                     self.note("unsolicited_wire_message");
                 }
                 None => {

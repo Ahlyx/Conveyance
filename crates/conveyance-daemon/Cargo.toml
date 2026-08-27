@@ -3,7 +3,7 @@ name = "conveyance-daemon"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Conveyance daemon: pairing/session state and BLE connectivity to the phone"
+description = "Conveyance daemon: session ownership, request routing, IPC server, and BLE connectivity to the phone"
 
 [lib]
 name = "conveyance_daemon"

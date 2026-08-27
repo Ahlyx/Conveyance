@@ -95,15 +95,6 @@ mod tests {
         assert_eq!(step(from, event), Ok(to), "{from:?} + {event:?}");
     }
 
-    #[allow(dead_code)]
-    fn illegal(from: PairingState, event: Event) {
-        assert_eq!(
-            step(from, event),
-            Err(TransitionError::Illegal { from, event }),
-            "{from:?} + {event:?} must be illegal"
-        );
-    }
-
     /// Full matrix per the spec diagram plus the recorded abort rule.
     #[test]
     fn full_matrix_matches_spec() {

@@ -165,7 +165,6 @@ pub fn query(filter: QueryFilter, db_path: PathBuf) -> Result<(), CliError> {
             let service = row.service().unwrap_or("-");
             let extra = match row.event_type.as_str() {
                 "execute_result" => format!("status={}", row.status().unwrap_or("?")),
-                "approval_denied" | "approval_granted" | "request_timeout" => String::new(),
                 _ => String::new(),
             };
             let id8 = &ReqId(row.req_id).hex()[..8];

@@ -134,7 +134,6 @@ impl PairingAck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::OsEntropy;
     use crate::crypto::test_support::CounterEntropy;
 
     fn key() -> IdentitySecretKey {
@@ -278,6 +277,5 @@ mod tests {
             bad.verify(&pc_key.public_key()),
             Err(ProtocolError::SignatureInvalid)
         ));
-        let _ = OsEntropy; // silence potential unused-import lint in cfg combos
     }
 }

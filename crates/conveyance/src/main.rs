@@ -1,9 +1,9 @@
 //! The Conveyance command line.
 //!
-//! Subcommands appear here as phases implement them. `pair` is first
-//! (phase 6); daemon/shim/log subcommands follow in phases 7-9 and will
-//! call into their crates' library surfaces rather than duplicating
-//! logic here.
+//! Every subcommand (`init`, `pair`, `daemon`, `mcp-shim`, `status`,
+//! `session`, `unpair`, `log`) is a thin dispatcher: argument parsing
+//! lives here, all behaviour lives in the `conveyance-core`,
+//! `conveyance-daemon`, and `conveyance-shim` library surfaces.
 
 mod logcmd;
 

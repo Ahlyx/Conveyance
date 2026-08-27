@@ -3,7 +3,7 @@ name = "conveyance-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Shared foundations for Conveyance: platform paths, config, error model"
+description = "Shared foundations for Conveyance: crypto, storage, sessions, wire protocol, transport, pairing, config, error model"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }

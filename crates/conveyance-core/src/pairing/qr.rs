@@ -262,7 +262,12 @@ mod tests {
         let art = qr.render_ascii();
         // EC level H over ~200-byte payloads yields a non-trivial matrix.
         assert!(art.lines().count() >= 21, "QR too small to be real");
-        assert!(art.contains('\u{2588}') || art.contains('\u{2591}') || art.contains(' '));
+        // render_ascii pairs module rows into half-block glyphs: a real
+        // matrix must contain at least one dark cell.
+        assert!(
+            art.contains('\u{2588}') || art.contains('\u{2580}') || art.contains('\u{2584}'),
+            "no dark modules rendered"
+        );
     }
 
     #[test]

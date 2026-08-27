@@ -654,35 +654,17 @@ mod tests {
 
         let inbound =
             match tokio::time::timeout(limits.confirm_timeout, Box::pin(link.recv())).await {
-                Err(_) => {
-                    eprintln!("[dbg] confirm timed out");
-                    return Err(PairingError::ConfirmTimedOut);
-                }
-                Ok(Ok(chunk)) => {
-                    eprintln!("[dbg] confirm received, {} bytes", chunk.len());
-                    chunk
-                }
-                Ok(Err(e)) => {
-                    eprintln!("[dbg] link error while awaiting confirm: {e:?}");
-                    return Err(PairingError::GenericFailed);
-                }
+                Err(_) => return Err(PairingError::ConfirmTimedOut),
+                Ok(Ok(chunk)) => chunk,
+                Ok(Err(_)) => return Err(PairingError::GenericFailed),
             };
         let confirm = match decode(&inbound) {
             Ok(WireMessage::PairingConfirm(c)) => c,
-            Err(e) => {
-                eprintln!("[dbg] decode failed: {e}");
-                return Err(PairingError::GenericFailed);
-            }
-            other => {
-                eprintln!("[dbg] decoded unexpected message: {other:?}");
-                return Err(PairingError::GenericFailed);
-            }
+            _ => return Err(PairingError::GenericFailed),
         };
         if ctx.nonces.record_and_check(&forced_nonce) {
-            eprintln!("[dbg] gate tripped: nonce already seen");
             return Err(PairingError::ReplayedNonce);
         }
-        eprintln!("[dbg] gate passed");
         let phone_public = match IdentityPublicKey::from_bytes(&confirm.phone_id_pub) {
             Ok(pk) => pk,
             Err(_) => return Err(PairingError::GenericFailed),

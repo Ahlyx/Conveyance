@@ -34,12 +34,13 @@ pub struct InboundRequest {
 /// Classification of an inbound line, deciding whether (and what) we
 /// answer.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum Inbound {
     /// Has an `id`: demands a response (or a JSON-RPC error).
     Request(InboundRequest),
-    /// No `id`: never answered, by JSON-RPC definition.
-    Notification { method: String },
+    /// No `id`: never answered, by JSON-RPC definition. The method name
+    /// is validated (a nameless line is still an error) but not retained
+    /// -- the shim ignores every notification it receives.
+    Notification,
 }
 
 /// Parse one stdin line. Errors carry the JSON-RPC error code to reply
@@ -65,6 +66,8 @@ pub fn parse_line(line: &str) -> Result<Inbound, (i64, String)> {
         _ => return Err((-32600, "missing or invalid jsonrpc field".into())),
     }
 
+    // Presence is validated even for notifications: a line with no
+    // method is malformed regardless of whether it wants an answer.
     let method = match obj.get("method").and_then(Value::as_str) {
         Some(m) => m.to_string(),
         None => return Err((-32600, "missing method field".into())),
@@ -74,12 +77,12 @@ pub fn parse_line(line: &str) -> Result<Inbound, (i64, String)> {
     let id = obj.get("id").cloned();
 
     if !has_id {
-        return Ok(Inbound::Notification { method });
+        return Ok(Inbound::Notification);
     }
     // A null id is treated as a notification per JSON-RPC semantics;
     // MCP clients do not send them.
     if matches!(id, Some(Value::Null)) {
-        return Ok(Inbound::Notification { method });
+        return Ok(Inbound::Notification);
     }
 
     Ok(Inbound::Request(InboundRequest {
@@ -172,19 +175,19 @@ mod tests {
     #[test]
     fn notifications_have_no_id_and_are_classified() {
         let line = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-        match parse_line(line).unwrap() {
-            Inbound::Notification { method } => assert_eq!(method, "notifications/initialized"),
-            other => panic!("{other:?}"),
-        }
+        assert!(matches!(parse_line(line).unwrap(), Inbound::Notification));
+    }
+
+    #[test]
+    fn nameless_notification_is_still_rejected() {
+        let (code, _) = parse_line(r#"{"jsonrpc":"2.0"}"#).unwrap_err();
+        assert_eq!(code, -32600);
     }
 
     #[test]
     fn null_id_is_a_notification_not_a_request() {
         let line = r#"{"jsonrpc":"2.0","id":null,"method":"x"}"#;
-        assert!(matches!(
-            parse_line(line).unwrap(),
-            Inbound::Notification { .. }
-        ));
+        assert!(matches!(parse_line(line).unwrap(), Inbound::Notification));
     }
 
     #[test]

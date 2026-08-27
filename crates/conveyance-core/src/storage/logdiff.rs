@@ -37,7 +37,6 @@
 
 use serde::Deserialize;
 
-use crate::crypto::OsEntropy;
 use crate::crypto::canonical_json::canonicalize;
 use crate::crypto::sign::{IdentityPublicKey, IdentitySecretKey};
 
@@ -248,12 +247,6 @@ pub fn render_phone_export(rows: &[PhoneLogRow]) -> String {
         out.push('\n');
     }
     out
-}
-
-/// Fresh key for fixtures.
-#[allow(dead_code)]
-pub(crate) fn fixture_key() -> IdentitySecretKey {
-    IdentitySecretKey::generate(&OsEntropy).expect("OS entropy available")
 }
 
 // ---- diff engine ---------------------------------------------------------------
@@ -494,6 +487,7 @@ fn wire_execute_context() -> &'static [u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::OsEntropy;
     use crate::crypto::sign::IdentitySecretKey;
 
     fn key() -> IdentitySecretKey {

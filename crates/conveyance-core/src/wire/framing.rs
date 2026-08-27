@@ -93,12 +93,10 @@ pub fn split_message(
         ));
     }
 
-    // A message whose length divides evenly still needs its END frame --
-    // emitted above as an empty-payload final frame because count was
-    // ceil'd with .max(1), so verify: len=2*max -> count=2, last chunk
-    // empty? No: chunks are [max][max] and the second carries END with a
-    // full payload. Empty finals only occur for len == 0 (count=1,
-    // empty START|END). The test pins this.
+    // div_ceil already accounts for an exact multiple (len = 2*max gives
+    // count = 2, chunks [max][max], the second carrying END with a full
+    // payload). The only empty final frame is the len == 0 case, where
+    // .max(1) forces one empty START|END frame. Both pinned by tests.
     Ok((frames, start_seq.wrapping_add(count as u16)))
 }
 
