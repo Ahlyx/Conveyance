@@ -11,21 +11,26 @@ plugins {
 // ---------------------------------------------------------------------------
 // Phase 10.1 UniFFI spike — Rust crypto bridge.
 //
-// Two Cargo invocations feed the Android build:
-//   1. `cargo ndk` cross-compiles conveyance-crypto-ffi to a .so per ABI,
-//      dropped straight into src/main/jniLibs/<abi>/.
-//   2. `uniffi-bindgen` reads one of those .so files and emits the Kotlin
-//      bindings that call into it (library mode — no .udl).
-// preBuild depends on (2), which depends on (1). Both are wiped by
-// `clean` via their declared outputs.
-//
-// The whole block is self-contained and removable: if the spike is
-// abandoned, deleting it plus the jniLibs dir and the generated-source
-// srcDir reverts the app to pure Kotlin.
+// Two independent Cargo steps feed the Android build, both hung off
+// preBuild:
+//   * cargoNdkBuild       — `cargo ndk` cross-compiles conveyance-crypto-ffi
+//                           to a .so per ABI, straight into
+//                           src/main/jniLibs/<abi>/ for packaging.
+//   * generateUniffiBindings — builds the ffi crate for the *host* and runs
+//                           uniffi-bindgen (library mode, no .udl) against
+//                           that. The bindings are ABI-independent; reading
+//                           the host lib avoids uniffi-bindgen's library
+//                           reader needing to parse a foreign object format
+//                           (it can't read an ELF .so on a Windows host).
+//                           The UniFFI checksum guard still matches the
+//                           packaged .so at runtime — same source, same
+//                           interface.
+// Both declare outputs, so `clean` and up-to-date checks work. The whole
+// block is self-contained: deleting it plus the jniLibs dir reverts the
+// app to pure Kotlin.
 // ---------------------------------------------------------------------------
 val rustWorkspaceRoot: File = rootProject.projectDir.parentFile
 val ffiCrate = "conveyance-crypto-ffi"
-val ffiLibName = "libconveyance_crypto_ffi.so"
 
 // ABI policy for v1 (see CONVEYANCE_PHASES.md 10.1): arm64-v8a is the
 // real-device target, x86_64 is what CI's emulator runs. No 32-bit.
@@ -33,6 +38,16 @@ val androidAbis = listOf("arm64-v8a", "x86_64")
 
 val jniLibsDir: File = file("src/main/jniLibs")
 val uniffiBindingsDir: Provider<Directory> = layout.buildDirectory.dir("generated/uniffi")
+
+val hostFfiLib: File = run {
+    val os = System.getProperty("os.name").lowercase()
+    val (prefix, ext) = when {
+        os.contains("win") -> "" to "dll"
+        os.contains("mac") -> "lib" to "dylib"
+        else -> "lib" to "so"
+    }
+    rustWorkspaceRoot.resolve("target/debug/${prefix}conveyance_crypto_ffi.$ext")
+}
 
 val cargoNdkBuild by tasks.registering(Exec::class) {
     group = "rust"
@@ -52,26 +67,36 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     outputs.dir(jniLibsDir)
 }
 
+val cargoBuildHostFfi by tasks.registering(Exec::class) {
+    group = "rust"
+    description = "Builds $ffiCrate for the host so uniffi-bindgen can read its metadata."
+    workingDir = rustWorkspaceRoot
+    commandLine("cargo", "build", "-p", ffiCrate)
+    inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-crypto-ffi/src"))
+    inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-crypto/src"))
+    inputs.file(rustWorkspaceRoot.resolve("Cargo.lock"))
+    outputs.file(hostFfiLib)
+}
+
 val generateUniffiBindings by tasks.registering(Exec::class) {
     group = "rust"
-    description = "Generates Kotlin bindings for $ffiCrate from the built .so."
-    dependsOn(cargoNdkBuild)
+    description = "Generates Kotlin bindings for $ffiCrate from the host build."
+    dependsOn(cargoBuildHostFfi)
     workingDir = rustWorkspaceRoot
-    val referenceSo = jniLibsDir.resolve("arm64-v8a/$ffiLibName")
     commandLine(
-        "cargo", "run", "--release", "-p", ffiCrate, "--bin", "uniffi-bindgen", "--",
+        "cargo", "run", "-p", ffiCrate, "--bin", "uniffi-bindgen", "--",
         "generate",
-        "--library", referenceSo.absolutePath,
+        "--library", hostFfiLib.absolutePath,
         "--language", "kotlin",
         "--no-format",
         "--out-dir", uniffiBindingsDir.get().asFile.absolutePath,
     )
-    inputs.file(referenceSo)
+    inputs.file(hostFfiLib)
     outputs.dir(uniffiBindingsDir)
 }
 
 tasks.matching { it.name == "preBuild" }.configureEach {
-    dependsOn(generateUniffiBindings)
+    dependsOn(cargoNdkBuild, generateUniffiBindings)
 }
 
 android {
@@ -86,6 +111,14 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Only ship ABIs the Rust bridge is built for (see androidAbis
+        // above). Without this the APK still carries JNA's .so for every
+        // ABI it publishes, on which our libconveyance_crypto_ffi.so
+        // would be missing.
+        ndk {
+            abiFilters += androidAbis
+        }
     }
 
     buildTypes {

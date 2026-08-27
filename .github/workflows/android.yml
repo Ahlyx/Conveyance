@@ -94,10 +94,37 @@ jobs:
             assembleDebug
             connectedDebugAndroidTest
 
+      # connectedDebugAndroidTest passes vacuously if it discovers no
+      # tests; the spike's whole point is that the HKDF round-trip
+      # actually executed on the emulator, so assert a non-zero count.
+      - name: Verify instrumented tests ran
+        run: |
+          python3 - <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+          files = glob.glob(
+              "android/app/build/outputs/androidTest-results/connected/**/*.xml",
+              recursive=True,
+          )
+          if not files:
+              sys.exit("no instrumented test result XML found")
+          total = bad = 0
+          for f in files:
+              r = ET.parse(f).getroot()
+              total += int(r.get("tests", 0))
+              bad += int(r.get("failures", 0)) + int(r.get("errors", 0))
+          print(f"instrumented tests: {total}, failures+errors: {bad}")
+          if total < 1:
+              sys.exit("expected >= 1 instrumented test")
+          if bad:
+              sys.exit("instrumented test failure")
+          PY
+
       - name: Upload instrumented test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: androidTest-results
-          path: android/app/build/reports/androidTests/
+          path: |
+            android/app/build/reports/androidTests/
+            android/app/build/outputs/androidTest-results/
           if-no-files-found: ignore
