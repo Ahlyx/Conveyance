@@ -897,7 +897,7 @@ pub(crate) mod test_support {
                             Status::Ok,
                             Some(200),
                             body,
-                            crate::session::unix_now(),
+                            conveyance_core::time::unix_now(),
                         )
                         .expect("mock body is canonical")
                         .sign(&signer);

@@ -26,7 +26,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use conveyance_core::crypto::hashchain::LogEvent;
 use conveyance_core::crypto::sign::IdentityPublicKey;
@@ -38,6 +38,7 @@ use conveyance_core::session::{
 };
 use conveyance_core::storage::logdb::LogDb;
 use conveyance_core::storage::pairings::PairingsDb;
+use conveyance_core::time::unix_now;
 use conveyance_core::transport::{InboundAssembler, TransportError};
 use conveyance_core::wire::binding::ApprovedRequestTracker;
 use conveyance_core::wire::framing;
@@ -1250,13 +1251,6 @@ impl Owner {
             in_flight: None,
         })
     }
-}
-
-pub(crate) fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 /// Log payload for an approval decision row. Mirrors the signature-

@@ -22,5 +22,6 @@ pub mod pairing;
 pub mod paths;
 pub mod session;
 pub mod storage;
+pub mod time;
 pub mod transport;
 pub mod wire;

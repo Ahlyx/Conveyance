@@ -14,6 +14,7 @@
 use std::time::Duration;
 
 use crate::crypto::EntropySource;
+use crate::time::unix_now;
 use crate::transport::Link;
 
 use crate::crypto::sign::IdentitySecretKey;
@@ -72,13 +73,6 @@ pub struct PairedPeer {
     pub phone_dh_pub: [u8; 32],
 }
 
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 /// Run the full ceremony. Shows ONE QR via `display`, waits within the
 /// QR window for the phone to advertise and connect, takes ONE confirm,
 /// answers with the Ack, persists the peer. Any rejection returns Err
@@ -103,7 +97,7 @@ where
     let pc_id_pub = ctx.pc_id_secret.public_key().to_bytes();
 
     let qr = PairingQr::new(
-        now_unix(),
+        unix_now(),
         pc_id_pub,
         ctx.pc_dh_pub,
         nonce,
@@ -205,7 +199,7 @@ where
 
     let record = ctx
         .store
-        .record(confirm.phone_id_pub, confirm.phone_dh_pub, now_unix())?;
+        .record(confirm.phone_id_pub, confirm.phone_dh_pub, unix_now())?;
 
     Ok(PairedPeer {
         phone_id_pub: record.id_pub,
@@ -268,7 +262,7 @@ mod tests {
                 Some(t) => t,
                 None => return None,
             };
-            let qr = PairingQr::parse(&text, now_unix()).ok()?;
+            let qr = PairingQr::parse(&text, unix_now()).ok()?;
 
             let (pc_pub, nonce) = match mode {
                 Mode::StaleContext => ([0x99u8; 32], [0x77u8; 32]),
@@ -629,7 +623,7 @@ mod tests {
         let qr_deadline = tokio::time::Instant::now() + limits.qr_ttl;
         let pc_id_pub = ctx.pc_id_secret.public_key().to_bytes();
         let qr = PairingQr::new(
-            now_unix(),
+            unix_now(),
             pc_id_pub,
             ctx.pc_dh_pub,
             forced_nonce,
@@ -687,7 +681,7 @@ mod tests {
             .map_err(|e| PairingError::Transport(e.to_string()))?;
         let record = ctx
             .store
-            .record(confirm.phone_id_pub, confirm.phone_dh_pub, now_unix())?;
+            .record(confirm.phone_id_pub, confirm.phone_dh_pub, unix_now())?;
         Ok(PairedPeer {
             phone_id_pub: record.id_pub,
             phone_dh_pub: record.dh_pub,

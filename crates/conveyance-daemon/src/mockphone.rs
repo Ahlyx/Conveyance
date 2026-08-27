@@ -24,7 +24,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use conveyance_core::crypto::dh::DhSecret;
 use conveyance_core::crypto::sign::IdentitySecretKey;
@@ -33,6 +33,7 @@ use conveyance_core::session::{PeerIdentity, Role, Session as CoreSession, Sessi
 use conveyance_core::storage::StorageError;
 use conveyance_core::storage::identity::KeyProvider;
 use conveyance_core::storage::pairings::PairingsDb;
+use conveyance_core::time::unix_now;
 use conveyance_core::transport::mock::{MockLink, MockTransport};
 use conveyance_core::transport::{InboundAssembler, Transport};
 use conveyance_core::wire::framing;
@@ -362,11 +363,4 @@ impl<'a> PhoneIo<'a> {
         let cipher = session.send(plaintext).map_err(|_| ())?;
         self.send_app(&cipher).await
     }
-}
-
-fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }

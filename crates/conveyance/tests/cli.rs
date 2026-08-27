@@ -12,6 +12,7 @@ use conveyance_core::crypto::{OsEntropy, hex_encode};
 use conveyance_core::storage::logdb::LogDb;
 use conveyance_core::storage::logdiff;
 use conveyance_core::storage::pairings::PairingsDb;
+use conveyance_core::time::unix_now;
 
 use predicates::prelude::*;
 
@@ -44,7 +45,7 @@ fn seed_event(db: &LogDb, n: u8, event_type: &str, payload_json: &str, ts: i64) 
 /// execute for aws, one timeout, plus session lifecycle rows.
 fn seed_mixed_log(dir: &std::path::Path) -> LogDb {
     let db = LogDb::open(&dir.join("executions.db")).unwrap();
-    let base = unix_now_for_tests() - 3600; // an hour ago
+    let base = unix_now() - 3600; // an hour ago
     seed_event(
         &db,
         0,
@@ -123,13 +124,6 @@ fn seed_mixed_log(dir: &std::path::Path) -> LogDb {
         base + 60,
     );
     db
-}
-
-fn unix_now_for_tests() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 // ---- verify exit codes ---------------------------------------------------------
@@ -467,7 +461,7 @@ fn diff_clean_session_exits_zero() {
     let dir = temp_dir("diff-clean");
     let fx = DiffFixture::new(dir.path());
     let export = dir.path().join("phone.jsonl");
-    fx.write_phone_export(&export, &[(1, unix_now_for_tests() - 100)]);
+    fx.write_phone_export(&export, &[(1, unix_now() - 100)]);
 
     // PC executed exactly that request, after approval.
     let db = LogDb::open(&dir.path().join("executions.db")).unwrap();
@@ -477,14 +471,14 @@ fn diff_clean_session_exits_zero() {
         req_id: rid,
         event_type: "execute_sent".into(),
         payload_json: r#"{"service":"github"}"#.into(),
-        timestamp: unix_now_for_tests() - 90,
+        timestamp: unix_now() - 90,
     })
     .unwrap();
     db.append(&LogEvent {
         req_id: rid,
         event_type: "execute_result".into(),
         payload_json: r#"{"status":"ok","executed_at":9}"#.into(),
-        timestamp: unix_now_for_tests() - 80,
+        timestamp: unix_now() - 80,
     })
     .unwrap();
 
@@ -512,7 +506,7 @@ fn diff_flags_execution_without_approval_as_security_event() {
         req_id: rid,
         event_type: "execute_result".into(),
         payload_json: r#"{"status":"ok","executed_at":9}"#.into(),
-        timestamp: unix_now_for_tests(),
+        timestamp: unix_now(),
     })
     .unwrap();
 
@@ -532,7 +526,7 @@ fn diff_flags_missing_execution_without_failing() {
     let dir = temp_dir("diff-missing");
     let fx = DiffFixture::new(dir.path());
     let export = dir.path().join("phone.jsonl");
-    fx.write_phone_export(&export, &[(4, unix_now_for_tests() - 50)]);
+    fx.write_phone_export(&export, &[(4, unix_now() - 50)]);
 
     // No PC execution at all: benign per spec, exit stays zero.
     bin()
@@ -557,7 +551,7 @@ fn diff_refuses_unsigned_export_naming_the_line() {
         [1u8; 16],
         "approval_granted",
         "{}",
-        unix_now_for_tests(),
+        unix_now(),
     );
     let mut lines = vec![logdiff::render_phone_export(std::slice::from_ref(&good))];
     lines.push(format!(

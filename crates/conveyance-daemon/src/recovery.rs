@@ -23,6 +23,7 @@ use std::collections::HashMap;
 
 use conveyance_core::crypto::hashchain::LogEvent;
 use conveyance_core::storage::logdb::LogDb;
+use conveyance_core::time::unix_now;
 
 /// Payload reason for requests orphaned by a crash/restart.
 pub const CRASHED_BEFORE_TERMINAL: &str = "crashed_before_terminal";
@@ -79,13 +80,6 @@ pub fn sweep_orphaned_requests(
         swept += 1;
     }
     Ok(swept)
-}
-
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
