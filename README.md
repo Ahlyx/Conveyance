@@ -194,8 +194,9 @@ cargo build --release -p conveyance --features ble
 ```
 
 The binary lands at `target/release/conveyance` (`conveyance.exe` on Windows).
-Standalone `conveyance-daemon` and `conveyance-mcp-shim` binaries also build,
-but the unified CLI is the intended interface.
+It is the single entry point: `conveyance daemon`, `conveyance mcp-shim`,
+`conveyance pair`, and the rest are subcommands, per the spec's CLI surface.
+`conveyance-daemon` and `conveyance-shim` remain as libraries the CLI links.
 
 First run needs an available OS keychain and a config file at the platform
 config location (`%APPDATA%\conveyance\config.toml` on Windows, XDG equivalent

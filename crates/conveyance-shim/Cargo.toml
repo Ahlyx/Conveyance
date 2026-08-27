@@ -17,7 +17,3 @@ tokio = { workspace = true, features = ["io-std", "io-util", "rt"] }
 # Tests drive a real daemon; the mock phone removes the BLE dependency.
 tempfile.workspace = true
 conveyance-daemon = { path = "../conveyance-daemon", features = ["mock-phone"] }
-
-[[bin]]
-name = "conveyance-mcp-shim"
-path = "src/main.rs"

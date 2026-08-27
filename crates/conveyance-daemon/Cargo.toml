@@ -9,10 +9,6 @@ description = "Conveyance daemon: session ownership, request routing, IPC server
 name = "conveyance_daemon"
 path = "src/lib.rs"
 
-[[bin]]
-name = "conveyance-daemon"
-path = "src/main.rs"
-
 [dependencies]
 conveyance-core = { path = "../conveyance-core" }
 tokio.workspace = true
