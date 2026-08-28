@@ -283,6 +283,16 @@
     "description": "24-word phrase -> BIP-39 seed (empty passphrase) -> HKDF-BLAKE2s identity keys. `bad_phrase` must be rejected (BadRecoveryPhrase)."
   },
   "schema_version": 1,
+  "sealed_identity": {
+    "content_key_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "description": "create_sealed_identity(phrase, content_key) then open_sealed_identity: public keys match the recovery vector, sign(message) is deterministic. The blob carries a random nonce and is not pinned. Opening with wrong_content_key must fail (DecryptionFailed).",
+    "ed25519_public_hex": "95dbfb758f5764904c5dee525766c2161100b46991e223c6b44399a2284895f1",
+    "message_hex": "636f6e766579616e63652d76312070686173652031302e32207365616c6564206964656e74697479",
+    "phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "signature_hex": "4f960110b7f41ad6883838015e850bdeb49549b38ead889a5bcbdfcf2e0603465a8450ab69b8fd5e9efedeb684f2bbbf8c35e7b691a8de16d94176793811bc0a",
+    "wrong_content_key_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+    "x25519_public_hex": "82d6a4f53fadbb062089d3312c0bc9ab21e43b00a6055cb9b720ed30c4221c1c"
+  },
   "signing_payload": {
     "cases": [
       {

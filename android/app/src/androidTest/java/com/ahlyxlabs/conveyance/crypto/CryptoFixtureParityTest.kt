@@ -29,6 +29,7 @@ import org.junit.runner.RunWith
 class CryptoFixtureParityTest {
 
     private val crypto: ConveyanceCrypto = UniffiConveyanceCrypto()
+    private val sealedCrypto: SealedIdentityCrypto = UniffiSealedIdentityCrypto()
     private lateinit var fixtures: JSONObject
 
     @Before
@@ -166,6 +167,32 @@ class CryptoFixtureParityTest {
         } catch (e: CryptoException.BadRecoveryPhrase) {
             // expected
         }
+    }
+
+    @Test
+    fun sealedIdentity() {
+        val g = fixtures.getJSONObject("sealed_identity")
+        val phrase = RecoveryPhrase(g.getString("phrase"))
+        val contentKey = g.getString("content_key_hex").hex()
+        val message = g.getString("message_hex").hex()
+
+        val sealed = sealedCrypto.createSealedIdentity(phrase, contentKey)
+        assertHex(g.getString("ed25519_public_hex"), sealed.ed25519Public.bytes)
+        assertHex(g.getString("x25519_public_hex"), sealed.x25519Public.bytes)
+
+        sealedCrypto.openSealedIdentity(sealed.blob, contentKey).getOrThrow().use { id ->
+            assertHex(g.getString("ed25519_public_hex"), id.ed25519PublicKey().bytes)
+            assertHex(g.getString("x25519_public_hex"), id.x25519PublicKey().bytes)
+            // Ed25519 is deterministic: a fixed message signs to a fixed value.
+            assertHex(g.getString("signature_hex"), id.sign(message).bytes)
+        }
+
+        val wrong = sealedCrypto.openSealedIdentity(
+            sealed.blob,
+            g.getString("wrong_content_key_hex").hex(),
+        )
+        assertTrue(wrong.isFailure)
+        assertTrue(wrong.exceptionOrNull() is CryptoException.DecryptionFailed)
     }
 
     @Test

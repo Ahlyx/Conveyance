@@ -1,7 +1,9 @@
 package com.ahlyxlabs.conveyance.crypto.di
 
 import com.ahlyxlabs.conveyance.crypto.ConveyanceCrypto
+import com.ahlyxlabs.conveyance.crypto.SealedIdentityCrypto
 import com.ahlyxlabs.conveyance.crypto.UniffiConveyanceCrypto
+import com.ahlyxlabs.conveyance.crypto.UniffiSealedIdentityCrypto
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -22,4 +24,8 @@ abstract class CryptoModule {
     @Binds
     @Singleton
     abstract fun bindConveyanceCrypto(impl: UniffiConveyanceCrypto): ConveyanceCrypto
+
+    @Binds
+    @Singleton
+    abstract fun bindSealedIdentityCrypto(impl: UniffiSealedIdentityCrypto): SealedIdentityCrypto
 }

@@ -78,11 +78,18 @@ val cargoBuildHostFfi by tasks.registering(Exec::class) {
     outputs.file(hostFfiLib)
 }
 
+val uniffiConfig: File = rustWorkspaceRoot.resolve("crates/$ffiCrate/uniffi.toml")
+
 val generateUniffiBindings by tasks.registering(Exec::class) {
     group = "rust"
     description = "Generates Kotlin bindings for $ffiCrate from the host build."
     dependsOn(cargoBuildHostFfi)
     workingDir = rustWorkspaceRoot
+    // uniffi-bindgen auto-discovers crates/<ffiCrate>/uniffi.toml from the
+    // library's metadata. That file sets `android = true` so the generated
+    // object cleaner uses the JNA path on <API 34 and guards the
+    // java.lang.ref.Cleaner path with @RequiresApi — lintDebug then passes
+    // at minSdk 30 even though UnlockedIdentity is a UniFFI object.
     commandLine(
         "cargo", "run", "-p", ffiCrate, "--bin", "uniffi-bindgen", "--",
         "generate",
@@ -92,6 +99,7 @@ val generateUniffiBindings by tasks.registering(Exec::class) {
         "--out-dir", uniffiBindingsDir.get().asFile.absolutePath,
     )
     inputs.file(hostFfiLib)
+    inputs.file(uniffiConfig)
     outputs.dir(uniffiBindingsDir)
 }
 

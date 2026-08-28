@@ -37,6 +37,9 @@ class UniffiConveyanceCrypto @Inject constructor() : ConveyanceCrypto {
     override fun generateRecoveryPhrase(): RecoveryPhrase =
         RecoveryPhrase(guard { ffiGenerateRecoveryPhrase() })
 
+    // The interface method is @RestrictTo(TESTS); implementing it is not
+    // "calling" it, but lint's RestrictedApi check flags the override too.
+    @Suppress("RestrictedApi")
     override fun deriveIdentity(phrase: RecoveryPhrase): IdentityKeys {
         val k = guard { recoveryPhraseToIdentity(phrase.raw()) }
         return IdentityKeys(

@@ -31,6 +31,7 @@ use crate::hashchain::{self, ChainRow, LogEvent};
 use crate::hkdf_blake2s;
 use crate::kdf;
 use crate::recovery::RecoveryPhrase;
+use crate::sealed;
 use crate::sign::IdentitySecretKey;
 use crate::signing::signing_payload;
 
@@ -51,6 +52,7 @@ pub fn build_document() -> Value {
         "argon2id_dek": argon2id_dek_fixture(),
         "aead_chacha20poly1305": aead_fixture(),
         "recovery": recovery_fixture(),
+        "sealed_identity": sealed_identity_fixture(),
         "hash_chain": hash_chain_fixture(),
     })
 }
@@ -319,6 +321,40 @@ fn recovery_fixture() -> Value {
     })
 }
 
+// -- Sealed identity (Phase 10.2) -------------------------------
+
+fn sealed_identity_fixture() -> Value {
+    let zeros_24 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+                    abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+                    abandon abandon abandon abandon abandon art";
+    let phrase = RecoveryPhrase::from_words(zeros_24).expect("valid phrase");
+    let content_key = [0x11u8; 32];
+    let message = b"conveyance-v1 phase 10.2 sealed identity";
+
+    // Seal (random nonce -> blob is NOT pinned), reopen, and sign a fixed
+    // message. Public keys and the Ed25519 signature are deterministic
+    // functions of the derived key; the Kotlin side asserts
+    // open(create(phrase, ck)).{ed25519_public, x25519_public, sign(msg)}
+    // reproduces these, and that a wrong content key fails.
+    let out = sealed::seal_identity(&crate::OsEntropy, &content_key, &phrase).expect("seal");
+    let secrets = sealed::open_identity(&content_key, &out.blob).expect("open");
+    let sig = IdentitySecretKey::from_bytes(secrets.ed25519()).sign(message);
+
+    json!({
+        "description": "create_sealed_identity(phrase, content_key) then open_sealed_identity: \
+                        public keys match the recovery vector, sign(message) is deterministic. \
+                        The blob carries a random nonce and is not pinned. Opening with \
+                        wrong_content_key must fail (DecryptionFailed).",
+        "phrase": zeros_24,
+        "content_key_hex": hex(&content_key),
+        "wrong_content_key_hex": hex(&[0x22u8; 32]),
+        "message_hex": hex(message),
+        "ed25519_public_hex": hex(&out.ed25519_public),
+        "x25519_public_hex": hex(&out.x25519_public),
+        "signature_hex": hex(&sig),
+    })
+}
+
 // -- Hash chain ---------------------------------------------------
 
 fn chain_event(n: u8) -> LogEvent {
@@ -406,6 +442,7 @@ mod tests {
             "argon2id_dek",
             "aead_chacha20poly1305",
             "recovery",
+            "sealed_identity",
             "hash_chain",
         ] {
             assert!(d.get(key).is_some(), "missing fixture group {key}");

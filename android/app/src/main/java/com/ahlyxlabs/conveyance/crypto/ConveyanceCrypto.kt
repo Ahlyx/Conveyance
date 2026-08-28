@@ -36,8 +36,15 @@ interface ConveyanceCrypto {
      * Validate a phrase's checksum and derive both long-term identity
      * keypairs (BIP-39 seed with an empty passphrase, then HKDF-BLAKE2s).
      *
+     * **Not the production unlock path.** Production goes through
+     * [SealedIdentityCrypto], where identity secrets never enter the JVM
+     * heap. This returns raw key bytes and is retained only as the
+     * cross-implementation verification path for the fixture parity suite
+     * — hence `@RestrictTo(TESTS)`.
+     *
      * @throws CryptoException.BadRecoveryPhrase if the phrase is invalid.
      */
+    @androidx.annotation.RestrictTo(androidx.annotation.RestrictTo.Scope.TESTS)
     fun deriveIdentity(phrase: RecoveryPhrase): IdentityKeys
 
     // -- Signing ----------------------------------------------------------

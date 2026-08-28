@@ -1,0 +1,9 @@
+# Kotlin bindings target Android. `android_cleaner = true` makes the
+# generator emit only the JNA-based object cleaner and drop the
+# `java.lang.ref.Cleaner` path — that class is API 33 and this app's
+# minSdk is 30, so its presence in the generated file fails `lintDebug`
+# with NewApi the moment the crate exposes a UniFFI object
+# (UnlockedIdentity, phase 10.2a).
+[bindings.kotlin]
+android = true
+android_cleaner = true

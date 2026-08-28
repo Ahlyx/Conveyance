@@ -46,6 +46,7 @@ pub mod hashchain;
 pub(crate) mod hkdf;
 pub mod kdf;
 pub mod recovery;
+pub mod sealed;
 pub mod sign;
 pub mod signing;
 
