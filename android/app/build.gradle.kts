@@ -118,7 +118,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.ahlyxlabs.conveyance.HiltTestRunner"
 
         // Only ship ABIs the Rust bridge is built for (see androidAbis
         // above). Without this the APK still carries JNA's .so for every
@@ -203,4 +203,6 @@ dependencies {
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.hilt.android.testing)
+    kspAndroidTest(libs.hilt.compiler)
 }
