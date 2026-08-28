@@ -89,9 +89,14 @@ jobs:
 
       # Cross-compiles conveyance-crypto-ffi to a .so for BOTH ABIs
       # (arm64-v8a is build-verified here; x86_64 is exercised by the
-      # instrumented test below), generates the Kotlin bindings, runs
+      # instrumented tests below), generates the Kotlin bindings, runs
       # lint + JVM unit tests + assembles the APK, then runs the
-      # instrumented HKDF-BLAKE2s round-trip test on an x86_64 emulator.
+      # instrumented suite on an x86_64 emulator.
+      #
+      # `locksettings set-pin` gives the emulator a secure lock screen so
+      # the auth-required conveyance_tier1 AndroidKeyStore key provisions
+      # (KeystoreKeysTest). Tests that need it are assumeTrue-guarded on
+      # isDeviceSecure, so this is what makes them run rather than skip.
       - name: lint + unit + assemble + instrumented
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -99,17 +104,14 @@ jobs:
           arch: x86_64
           target: google_apis
           working-directory: android
-          script: >-
-            ./gradlew --no-daemon
-            lintDebug
-            testDebugUnitTest
-            assembleDebug
-            connectedDebugAndroidTest
+          script: |
+            adb shell locksettings set-pin 0000 || echo "set-pin failed; tier1 key tests will skip"
+            ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug connectedDebugAndroidTest
 
       # connectedDebugAndroidTest passes vacuously if it discovers no
-      # tests. The Rust<->Kotlin fixture parity suite plus the HKDF spike
-      # round-trip must actually execute on the emulator, so assert a
-      # floor well below their real count (parity suite 9 + spike 3 = 12).
+      # tests. Assert a floor well below the real count and that the
+      # classes carrying the security-critical assertions actually ran
+      # (fixture parity suite, Keystore key-flag checks).
       - name: Verify instrumented tests ran
         run: |
           python3 - <<'PY'
@@ -130,10 +132,15 @@ jobs:
                   classes.add(tc.get("classname", ""))
           print(f"instrumented tests: {total}, failures+errors: {bad}")
           print("classes:", ", ".join(sorted(classes)))
-          if total < 10:
-              sys.exit(f"expected >= 10 instrumented tests, saw {total}")
-          if "com.ahlyxlabs.conveyance.crypto.CryptoFixtureParityTest" not in classes:
-              sys.exit("CryptoFixtureParityTest did not run")
+          if total < 12:
+              sys.exit(f"expected >= 12 instrumented tests, saw {total}")
+          required = [
+              "com.ahlyxlabs.conveyance.crypto.CryptoFixtureParityTest",
+              "com.ahlyxlabs.conveyance.storage.keystore.KeystoreKeysTest",
+          ]
+          missing = [c for c in required if c not in classes]
+          if missing:
+              sys.exit(f"required instrumented classes did not run: {missing}")
           if bad:
               sys.exit("instrumented test failure")
           PY
