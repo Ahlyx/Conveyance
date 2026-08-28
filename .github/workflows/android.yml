@@ -132,8 +132,8 @@ jobs:
                   classes.add(tc.get("classname", ""))
           print(f"instrumented tests: {total}, failures+errors: {bad}")
           print("classes:", ", ".join(sorted(classes)))
-          if total < 29:
-              sys.exit(f"expected >= 29 instrumented tests, saw {total}")
+          if total < 30:
+              sys.exit(f"expected >= 30 instrumented tests, saw {total}")
           required = [
               "com.ahlyxlabs.conveyance.crypto.CryptoFixtureParityTest",
               "com.ahlyxlabs.conveyance.storage.keystore.KeystoreKeysTest",

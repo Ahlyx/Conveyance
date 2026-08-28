@@ -1,6 +1,8 @@
 package com.ahlyxlabs.conveyance.storage.log
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteException
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -23,7 +25,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -156,6 +160,33 @@ class ApprovalLogTest {
             val sig = Ed25519Signature(o.getString("signature").hexToBytes())
             assertTrue("row signature must verify", crypto.verify(pub, payload, sig).isSuccess)
         }
+    }
+
+    @Test
+    fun databaseFileIsEncryptedAtRest() = runBlocking {
+        appendN(2)
+        db.close()
+
+        val raw = context.getDatabasePath(dbName)
+        assertThrows(SQLiteException::class.java) {
+            val plain = SQLiteDatabase.openDatabase(raw.path, null, SQLiteDatabase.OPEN_READONLY)
+            plain.rawQuery("SELECT name FROM sqlite_master", null).use { it.count }
+            plain.close()
+        }
+        val sqliteMagic = byteArrayOf(
+            0x53, 0x51, 0x4C, 0x69, 0x74, 0x65, 0x20, 0x66,
+            0x6F, 0x72, 0x6D, 0x61, 0x74, 0x20, 0x33, 0x00,
+        )
+        val header = ByteArray(16)
+        raw.inputStream().use { input ->
+            var off = 0
+            while (off < 16) {
+                val n = input.read(header, off, 16 - off)
+                if (n < 0) break
+                off += n
+            }
+        }
+        assertFalse(sqliteMagic.contentEquals(header))
     }
 
     @Test
