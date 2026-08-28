@@ -46,6 +46,7 @@ pub(crate) mod hkdf;
 pub mod kdf;
 pub mod recovery;
 pub mod sign;
+pub mod signing;
 
 /// HKDF-BLAKE2s (RFC 5869), the one entry point the rest of the workspace
 /// needs — `conveyance-core`'s storage layer derives its DEK with it. The

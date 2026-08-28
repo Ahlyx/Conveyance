@@ -679,6 +679,41 @@ mod tests {
         assert!(!json_text.contains("http_status"), "{json_text}");
     }
 
+    /// Parity pin for `conveyance_crypto::signing::signing_payload`: the
+    /// standalone primitive (which the Android FFI bridge signs over) must
+    /// produce byte-identical output to this module's inline
+    /// `context || canonical_json` concatenation. If the two ever diverge,
+    /// phone and PC sign different preimages and every cross-side
+    /// signature fails. A follow-up will collapse the inline join here
+    /// into a call to the primitive; until then, this asserts they match.
+    #[test]
+    fn signing_payload_matches_the_crypto_primitive() {
+        let key = IdentitySecretKey::generate(&CounterEntropy).unwrap();
+        let id = sample_req_id(7);
+
+        for resp in [
+            ApprovalResponse::approved_or_denied(id, Decision::Approved, None, &key),
+            ApprovalResponse::approved_or_denied(
+                id,
+                Decision::Denied,
+                Some("user_tap".into()),
+                &key,
+            ),
+        ] {
+            let via_inline = signing_payload(APPROVE_CONTEXT, &resp).unwrap();
+
+            // Rebuild `canonical_body` the way the inline path does, then
+            // join via the primitive.
+            let mut value = serde_json::to_value(&resp).unwrap();
+            value.as_object_mut().unwrap().remove("signature");
+            let canonical = canonicalize(&value).unwrap();
+            let via_primitive =
+                conveyance_crypto::signing::signing_payload(APPROVE_CONTEXT, &canonical);
+
+            assert_eq!(via_inline, via_primitive);
+        }
+    }
+
     #[test]
     fn approval_signature_verifies_and_detects_tampering() {
         let key = IdentitySecretKey::generate(&CounterEntropy).unwrap();

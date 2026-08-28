@@ -1,101 +1,105 @@
 //! UniFFI bridge over `conveyance-crypto` for the Android phone side.
 //!
-//! **Phase 10.1 viability spike.** The point of this crate right now is
-//! not its API surface — it is to prove the toolchain end to end:
-//! `conveyance-crypto` cross-compiles to Android, UniFFI generates Kotlin
-//! bindings from the compiled `.so`, and a value round-trips through
-//! those bindings byte-identically to the Rust reference on a real
-//! emulator. Exactly one primitive is bridged, `hkdf_blake2s`; the full
-//! crypto surface follows only if the spike succeeds.
+//! **Phase 10.1 — the full primitive surface.** The spike (one function,
+//! `hkdf_blake2s`) proved the toolchain end to end: `conveyance-crypto`
+//! cross-compiles to Android, UniFFI generates Kotlin bindings, and a
+//! value round-trips through them byte-identically to the Rust reference
+//! on a real emulator. This crate now bridges every primitive Phase 10.1
+//! needs — recovery-phrase derivation, Ed25519, canonical JSON, the
+//! signing-payload construction, Argon2id, ChaCha20-Poly1305, HKDF-BLAKE2s,
+//! and the SHA-256 hash chain.
 //!
-//! Design notes that will still hold when this grows:
+//! Design rules, unchanged from the spike and load-bearing as this grows:
 //!
-//! * The bridge is *thin*. It converts owned FFI types to slices, calls
-//!   straight into `conveyance-crypto`, and converts back. No crypto
-//!   logic lives here — a second implementation is the thing the whole
-//!   UniFFI decision exists to avoid.
-//! * Every fallible-at-the-boundary case is a typed `Result`, never a
-//!   panic. A panic unwinding into the generated C ABI is an abort on
-//!   the phone; `conveyance_crypto::hkdf_blake2s` panics on an
-//!   over-long output request, so that case is checked here first.
+//! * **The bridge is thin.** Each exported function converts owned FFI
+//!   types to slices/arrays, calls straight into `conveyance-crypto`, and
+//!   converts back. No cryptographic logic lives here — a second
+//!   implementation is the exact thing the UniFFI decision exists to
+//!   avoid. Every function is a pure function of its inputs, which is what
+//!   lets the JSON fixture cross-check (emitted by `conveyance-crypto`,
+//!   asserted from Kotlin) be a straight table comparison.
+//!
+//! * **Stateless.** Key material crosses the boundary as `Vec<u8>`; this
+//!   crate holds no state and owns no handles. That means secret bytes
+//!   (Ed25519 scalar, Argon2id DEK, derived identity keys) enter the JVM
+//!   heap as `ByteArray`, where they are GC-managed and not zeroized — a
+//!   real limitation for Phase 10.1, documented on the Kotlin adapter and
+//!   in the phase report. The Kotlin API is an interface so Phase 10.2 can
+//!   move secret handling to Rust-owned, Keystore-backed handles without
+//!   touching call sites.
+//!
+//! * **No panic crosses the ABI.** A panic unwinding into the generated C
+//!   ABI aborts the process on the phone. Every fallible-at-the-boundary
+//!   case — wrong byte-string length, an over-long HKDF request that
+//!   `conveyance_crypto::hkdf_blake2s` would panic on, a non-canonical
+//!   value — is a typed [`CryptoFfiError`] instead.
 
 uniffi::setup_scaffolding!();
 
-/// RFC 5869 caps HKDF-Expand output at 255 * HashLen; BLAKE2s HashLen is
-/// 32. `conveyance_crypto::hkdf_blake2s` panics past this, so the bridge
-/// rejects it as a typed error instead.
-const HKDF_MAX_OUTPUT: usize = 255 * 32;
+pub mod aead;
+pub mod canonical;
+pub mod hashchain;
+pub mod hkdf;
+pub mod kdf;
+pub mod recovery;
+pub mod sign;
+pub mod signing;
 
-/// Failures the HKDF bridge can report to Kotlin. Coarse on purpose:
-/// these are caller misuse (a bad length), not cryptographic outcomes.
+/// Failures any bridged primitive can report to Kotlin.
+///
+/// Deliberately coarse, and for the same reason `conveyance_crypto`'s own
+/// `CryptoError` is coarse: a security product must not hand callers an
+/// oracle for *which* internal check failed. `SignatureInvalid` and
+/// `DecryptionFailed` do not say whether the key, the nonce, or a single
+/// byte was wrong. The length/JSON variants are caller misuse, not
+/// cryptographic outcomes, and are safe to name precisely.
+///
+/// `ZeroLength` and `OutputTooLong` predate this expansion (the spike's
+/// HKDF guard) and keep their names and meaning so the existing Kotlin
+/// spike test is unaffected.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum CryptoFfiError {
     #[error("requested HKDF output length is zero")]
     ZeroLength,
     #[error("requested HKDF output length exceeds the RFC 5869 maximum of 255*HashLen bytes")]
     OutputTooLong,
+    #[error("a byte string argument has the wrong length for its field")]
+    BadLength,
+    #[error("signature verification failed")]
+    SignatureInvalid,
+    #[error("decryption failed")]
+    DecryptionFailed,
+    #[error("entropy source failed")]
+    EntropyFailure,
+    #[error("invalid recovery phrase")]
+    BadRecoveryPhrase,
+    #[error("invalid key encoding")]
+    BadKeyBytes,
+    #[error("key derivation failed")]
+    KdfFailure,
+    #[error("input is not valid JSON")]
+    InvalidJson,
+    #[error("value outside the canonical-JSON domain")]
+    OutsideCanonicalDomain,
 }
 
-/// HKDF-BLAKE2s (RFC 5869) with the salt omitted — i.e. 32 zero bytes
-/// per RFC 5869 §2.2, matching `CONVEYANCE_SPEC.md`. Delegates verbatim
-/// to [`conveyance_crypto::hkdf_blake2s`]; the output is byte-identical
-/// to the PC side for the same inputs.
-#[uniffi::export]
-pub fn hkdf_blake2s(ikm: Vec<u8>, info: Vec<u8>, length: u32) -> Result<Vec<u8>, CryptoFfiError> {
-    let len = length as usize;
-    if len == 0 {
-        return Err(CryptoFfiError::ZeroLength);
+/// Map `conveyance-crypto`'s error onto the FFI error. One-to-one; every
+/// arm is spelled out so a new `CryptoError` variant fails to compile here
+/// rather than silently collapsing to a wrong code.
+pub(crate) fn map_core_err(e: conveyance_crypto::CryptoError) -> CryptoFfiError {
+    use conveyance_crypto::CryptoError as E;
+    match e {
+        E::SignatureInvalid => CryptoFfiError::SignatureInvalid,
+        E::DecryptionFailed => CryptoFfiError::DecryptionFailed,
+        E::EntropyFailure => CryptoFfiError::EntropyFailure,
+        E::BadRecoveryPhrase => CryptoFfiError::BadRecoveryPhrase,
+        E::BadKeyBytes => CryptoFfiError::BadKeyBytes,
+        E::KdfFailure => CryptoFfiError::KdfFailure,
+        E::OutsideCanonicalDomain => CryptoFfiError::OutsideCanonicalDomain,
     }
-    if len > HKDF_MAX_OUTPUT {
-        return Err(CryptoFfiError::OutputTooLong);
-    }
-
-    let mut okm = vec![0u8; len];
-    conveyance_crypto::hkdf_blake2s(&ikm, &info, &mut okm);
-    Ok(okm)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The same known-answer vector pinned by
-    /// `conveyance_crypto::hkdf::tests::blake2s_known_answer` and asserted
-    /// again by the Kotlin instrumented test (`HkdfBlake2sSpikeTest`):
-    /// one anchor, checked on every layer of the bridge. BLAKE2s has no
-    /// official HKDF vectors, so the value is fixed to the Rust
-    /// implementation — reproducing it is what "faithful" means here.
-    const SPIKE_IKM: &[u8] = &[0x5a; 64];
-    const SPIKE_INFO: &[u8] = b"conveyance-v1-identity-ed25519";
-    const SPIKE_OKM_32_HEX: &str =
-        "076cd99ded0d8b7bd6a6d87fd944e1ac7f52f81fa20489b68bc70ed07febfe3a";
-
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
-    }
-
-    #[test]
-    fn hkdf_blake2s_matches_known_answer() {
-        let okm = hkdf_blake2s(SPIKE_IKM.to_vec(), SPIKE_INFO.to_vec(), 32).unwrap();
-        assert_eq!(hex(&okm), SPIKE_OKM_32_HEX);
-    }
-
-    #[test]
-    fn rejects_zero_and_overlong_lengths() {
-        assert!(matches!(
-            hkdf_blake2s(vec![1], vec![], 0),
-            Err(CryptoFfiError::ZeroLength)
-        ));
-        assert!(matches!(
-            hkdf_blake2s(vec![1], vec![], (HKDF_MAX_OUTPUT + 1) as u32),
-            Err(CryptoFfiError::OutputTooLong)
-        ));
-    }
-
-    #[test]
-    fn output_is_length_prefix_stable() {
-        let short = hkdf_blake2s(SPIKE_IKM.to_vec(), SPIKE_INFO.to_vec(), 32).unwrap();
-        let long = hkdf_blake2s(SPIKE_IKM.to_vec(), SPIKE_INFO.to_vec(), 40).unwrap();
-        assert_eq!(short.as_slice(), &long[..32]);
-    }
+/// Convert an owned `Vec<u8>` to a fixed-size array, or [`CryptoFfiError::BadLength`].
+pub(crate) fn fixed<const N: usize>(bytes: Vec<u8>) -> Result<[u8; N], CryptoFfiError> {
+    bytes.try_into().map_err(|_| CryptoFfiError::BadLength)
 }

@@ -13,6 +13,11 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 conveyance-crypto = { path = "../conveyance-crypto" }
+# Canonical-JSON input crosses the FFI boundary as a JSON string; this
+# crate parses it to a `serde_json::Value` before handing it to
+# `conveyance-crypto`, exactly mirroring the PC side's parse-then-
+# canonicalize path.
+serde_json.workspace = true
 thiserror.workspace = true
 # `cli` provides `uniffi::uniffi_bindgen_main` for the bin below. Library
 # mode (generate bindings from the compiled .so) needs no UDL file.
