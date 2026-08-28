@@ -41,6 +41,7 @@
 pub mod aead;
 pub mod canonical_json;
 pub mod dh;
+pub mod fixtures;
 pub mod hashchain;
 pub(crate) mod hkdf;
 pub mod kdf;

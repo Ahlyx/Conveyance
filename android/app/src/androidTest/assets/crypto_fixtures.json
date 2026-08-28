@@ -1,0 +1,306 @@
+{
+  "_comment": "Emitted by `cargo run -p conveyance-crypto --example emit_fixtures`. Do not hand-edit. CI regenerates this file and fails on any diff.",
+  "aead_chacha20poly1305": {
+    "cases": [
+      {
+        "aad_hex": "50515253c0c1c2c3c4c5c6c7",
+        "key_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+        "nonce_hex": "070000004041424344454647",
+        "plaintext_hex": "4c616469657320616e642047656e746c656d656e206f662074686520636c617373206f66202739393a204966204920636f756c64206f6666657220796f75206f6e6c79206f6e652074697020666f7220746865206675747572652c2073756e73637265656e20776f756c642062652069742e",
+        "sealed_hex": "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b61161ae10b594f09e26a7e902ecbd0600691"
+      },
+      {
+        "aad_hex": "",
+        "key_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+        "nonce_hex": "070000004041424344454647",
+        "plaintext_hex": "",
+        "sealed_hex": "a0784d7a4716f3feb4f64e7f4b39bf04"
+      }
+    ],
+    "description": "ChaCha20-Poly1305 (RFC 8439 §2.8.2). `sealed_hex` is ciphertext||tag. `tamper` (first byte of sealed flipped) must fail to open.",
+    "tamper": {
+      "aad_hex": "50515253c0c1c2c3c4c5c6c7",
+      "key_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "nonce_hex": "070000004041424344454647",
+      "sealed_hex": "d21a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b61161ae10b594f09e26a7e902ecbd0600691"
+    }
+  },
+  "argon2id_dek": {
+    "cases": [
+      {
+        "dek_hex": "b5d354876f658cde1a5d125c43b4a60465890d322a2394066a3428b0d1fa231a",
+        "passphrase_utf8": "correct horse battery staple",
+        "salt_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+      }
+    ],
+    "description": "Argon2id, spec params (m=65536 KiB, t=3, p=1, 32-byte out, 16-byte salt). One case: the 64 MiB cost is real on an emulator. No third-party vector for these params; frozen to conveyance-crypto."
+  },
+  "canonical_json": {
+    "cases_error": [
+      {
+        "error": "OutsideCanonicalDomain",
+        "input": "{\"x\":1.5}"
+      },
+      {
+        "error": "OutsideCanonicalDomain",
+        "input": "{\"x\":3.0}"
+      },
+      {
+        "error": "OutsideCanonicalDomain",
+        "input": "{\"x\":1e30}"
+      },
+      {
+        "error": "OutsideCanonicalDomain",
+        "input": "{\"x\":99999999999999999999999}"
+      }
+    ],
+    "cases_ok": [
+      {
+        "canonical": "{\"\\r\":\"cr\",\"A\":\"a\",\"€\":\"euro\",\"𝄞\":\"clef\",\"￿\":\"ffff\"}",
+        "input": "{\"€\":\"euro\",\"\\r\":\"cr\",\"￿\":\"ffff\",\"𝄞\":\"clef\",\"A\":\"a\"}"
+      },
+      {
+        "canonical": "{\"a\":[3,2,{\"x\":null,\"y\":true}],\"b\":1}",
+        "input": "{ \"b\": 1, \"a\": [ 3, 2, {\"y\": true, \"x\": null} ] }"
+      },
+      {
+        "canonical": "{\"decision\":\"approved\",\"req_id\":\"aa00\"}",
+        "input": "{\"decision\":\"approved\",\"req_id\":\"aa00\"}"
+      },
+      {
+        "canonical": "{\"decision\":\"denied\",\"reason\":\"user_tap\",\"req_id\":\"aa00\"}",
+        "input": "{\"decision\":\"denied\",\"reason\":\"user_tap\",\"req_id\":\"aa00\"}"
+      },
+      {
+        "canonical": "{\"n\":9007199254740993,\"neg\":-9007199254740993}",
+        "input": "{\"n\":9007199254740993,\"neg\":-9007199254740993}"
+      },
+      {
+        "canonical": "{\"max\":18446744073709551615,\"min\":-9223372036854775808}",
+        "input": "{\"max\":18446744073709551615,\"min\":-9223372036854775808}"
+      },
+      {
+        "canonical": "{\"a\":{},\"b\":[]}",
+        "input": "{\"a\":{},\"b\":[]}"
+      }
+    ],
+    "description": "RFC 8785 JCS restricted to the Conveyance domain (ints, strings, bools, null, arrays, objects). Floats and out-of-range integers are rejected, not formatted. `input` is raw JSON text."
+  },
+  "ed25519": {
+    "cases": [
+      {
+        "message_hex": "",
+        "public_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+        "secret_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+        "signature_hex": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+      },
+      {
+        "message_hex": "72",
+        "public_hex": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        "secret_hex": "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+        "signature_hex": "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"
+      }
+    ],
+    "description": "Ed25519 (RFC 8032 §7.1). `verify_fail` must not verify.",
+    "verify_fail": {
+      "message_hex": "",
+      "public_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "signature_hex": "e4564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+    }
+  },
+  "hash_chain": {
+    "content_tampered": {
+      "expect_index": 2,
+      "expect_kind": "ContentTampered",
+      "rows": [
+        {
+          "event": {
+            "event_type": "approval_granted",
+            "payload_json": "{\"decision\":\"approved\",\"n\":1}",
+            "req_id_hex": "01010101010101010101010101010101",
+            "timestamp": 1700000001
+          },
+          "hash_hex": "5ceb3f981e02dce4f1429c1fba3a1ec8e59941ea440c36bc2a52a73f45ef776a",
+          "prev_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "event": {
+            "event_type": "approval_granted",
+            "payload_json": "{\"decision\":\"approved\",\"n\":2}",
+            "req_id_hex": "02020202020202020202020202020202",
+            "timestamp": 1700000002
+          },
+          "hash_hex": "fd12869db52efe1f1b7daa019507b25fe1d557fccf0fe91c81227222fa0ae6ad",
+          "prev_hash_hex": "5ceb3f981e02dce4f1429c1fba3a1ec8e59941ea440c36bc2a52a73f45ef776a"
+        },
+        {
+          "event": {
+            "event_type": "approval_granted",
+            "payload_json": "{\"decision\":\"approved\",\"n\":99}",
+            "req_id_hex": "03030303030303030303030303030303",
+            "timestamp": 1700000003
+          },
+          "hash_hex": "46f00ffd7071b98edae89fc3e813a3d50ea5d97f412f6ffa9e27f5856ba2c70b",
+          "prev_hash_hex": "fd12869db52efe1f1b7daa019507b25fe1d557fccf0fe91c81227222fa0ae6ad"
+        },
+        {
+          "event": {
+            "event_type": "approval_granted",
+            "payload_json": "{\"decision\":\"approved\",\"n\":4}",
+            "req_id_hex": "04040404040404040404040404040404",
+            "timestamp": 1700000004
+          },
+          "hash_hex": "874eae38499561e7ea4dfbd6dbdf9620b562ad23b02f60958fef29e70dac5b61",
+          "prev_hash_hex": "46f00ffd7071b98edae89fc3e813a3d50ea5d97f412f6ffa9e27f5856ba2c70b"
+        }
+      ]
+    },
+    "description": "SHA-256 hash chain. `single` pins one row's content-json and hash. `intact` verifies (Intact, 4 rows). `content_tampered` -> Broken/ContentTampered at index 2. `link_broken` -> Broken/LinkBroken at index 1. Genesis prev_hash is 32 zero bytes.",
+    "genesis_prev_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "intact": [
+      {
+        "event": {
+          "event_type": "approval_granted",
+          "payload_json": "{\"decision\":\"approved\",\"n\":1}",
+          "req_id_hex": "01010101010101010101010101010101",
+          "timestamp": 1700000001
+        },
+        "hash_hex": "5ceb3f981e02dce4f1429c1fba3a1ec8e59941ea440c36bc2a52a73f45ef776a",
+        "prev_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "event": {
+          "event_type": "approval_granted",
+          "payload_json": "{\"decision\":\"approved\",\"n\":2}",
+          "req_id_hex": "02020202020202020202020202020202",
+          "timestamp": 1700000002
+        },
+        "hash_hex": "fd12869db52efe1f1b7daa019507b25fe1d557fccf0fe91c81227222fa0ae6ad",
+        "prev_hash_hex": "5ceb3f981e02dce4f1429c1fba3a1ec8e59941ea440c36bc2a52a73f45ef776a"
+      },
+      {
+        "event": {
+          "event_type": "approval_granted",
+          "payload_json": "{\"decision\":\"approved\",\"n\":3}",
+          "req_id_hex": "03030303030303030303030303030303",
+          "timestamp": 1700000003
+        },
+        "hash_hex": "46f00ffd7071b98edae89fc3e813a3d50ea5d97f412f6ffa9e27f5856ba2c70b",
+        "prev_hash_hex": "fd12869db52efe1f1b7daa019507b25fe1d557fccf0fe91c81227222fa0ae6ad"
+      },
+      {
+        "event": {
+          "event_type": "approval_granted",
+          "payload_json": "{\"decision\":\"approved\",\"n\":4}",
+          "req_id_hex": "04040404040404040404040404040404",
+          "timestamp": 1700000004
+        },
+        "hash_hex": "874eae38499561e7ea4dfbd6dbdf9620b562ad23b02f60958fef29e70dac5b61",
+        "prev_hash_hex": "46f00ffd7071b98edae89fc3e813a3d50ea5d97f412f6ffa9e27f5856ba2c70b"
+      }
+    ],
+    "link_broken": {
+      "expect_index": 1,
+      "expect_kind": "LinkBroken",
+      "rows": [
+        {
+          "event": {
+            "event_type": "approval_granted",
+            "payload_json": "{\"decision\":\"approved\",\"n\":1}",
+            "req_id_hex": "01010101010101010101010101010101",
+            "timestamp": 1700000001
+          },
+          "hash_hex": "5ceb3f981e02dce4f1429c1fba3a1ec8e59941ea440c36bc2a52a73f45ef776a",
+          "prev_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "event": {
+            "event_type": "approval_granted",
+            "payload_json": "{\"decision\":\"approved\",\"n\":3}",
+            "req_id_hex": "03030303030303030303030303030303",
+            "timestamp": 1700000003
+          },
+          "hash_hex": "46f00ffd7071b98edae89fc3e813a3d50ea5d97f412f6ffa9e27f5856ba2c70b",
+          "prev_hash_hex": "fd12869db52efe1f1b7daa019507b25fe1d557fccf0fe91c81227222fa0ae6ad"
+        },
+        {
+          "event": {
+            "event_type": "approval_granted",
+            "payload_json": "{\"decision\":\"approved\",\"n\":4}",
+            "req_id_hex": "04040404040404040404040404040404",
+            "timestamp": 1700000004
+          },
+          "hash_hex": "874eae38499561e7ea4dfbd6dbdf9620b562ad23b02f60958fef29e70dac5b61",
+          "prev_hash_hex": "46f00ffd7071b98edae89fc3e813a3d50ea5d97f412f6ffa9e27f5856ba2c70b"
+        }
+      ]
+    },
+    "single": {
+      "event": {
+        "event_type": "approval_granted",
+        "payload_json": "{\"decision\":\"approved\",\"n\":1}",
+        "req_id_hex": "01010101010101010101010101010101",
+        "timestamp": 1700000001
+      },
+      "event_content_json": "{\"event_type\":\"approval_granted\",\"payload_json\":\"{\\\"decision\\\":\\\"approved\\\",\\\"n\\\":1}\",\"req_id\":\"01010101010101010101010101010101\",\"timestamp\":1700000001}",
+      "row_hash_hex": "5ceb3f981e02dce4f1429c1fba3a1ec8e59941ea440c36bc2a52a73f45ef776a"
+    }
+  },
+  "hkdf_blake2s": {
+    "cases": [
+      {
+        "ikm_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "info_utf8": "conveyance-v1-identity-ed25519",
+        "length": 32,
+        "okm_hex": "076cd99ded0d8b7bd6a6d87fd944e1ac7f52f81fa20489b68bc70ed07febfe3a"
+      },
+      {
+        "ikm_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "info_utf8": "conveyance-v1-identity-x25519",
+        "length": 32,
+        "okm_hex": "94715914b10fb858218fbf60f76acaedcb74f46aed45a336c76975b24a0abfad"
+      },
+      {
+        "ikm_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "info_utf8": "length probe",
+        "length": 65,
+        "okm_hex": "3c2b15a4c4b825f38dcf1c1474ba208ac38349defe6d2d8c21a01bb2bb7cf98c739f6d5113e9b99e48213d2c4847144679fcff93eba4793af62d0e0731da573474"
+      }
+    ],
+    "description": "HKDF-BLAKE2s (RFC 5869), salt omitted = 32 zero bytes. Frozen to conveyance-crypto; no third-party vectors exist."
+  },
+  "recovery": {
+    "bad_phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon zoo",
+    "cases": [
+      {
+        "ed25519_public_hex": "95dbfb758f5764904c5dee525766c2161100b46991e223c6b44399a2284895f1",
+        "ed25519_secret_hex": "d1e044dad39a9278124157c7f8f3dae0e7515c18fce7d09d69ad8c88acefd91f",
+        "phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+        "x25519_public_hex": "82d6a4f53fadbb062089d3312c0bc9ab21e43b00a6055cb9b720ed30c4221c1c",
+        "x25519_secret_hex": "17f78459a26f287e26b7a0b60ab126e997809bbb1c2a6ea01ab50da54b62cff5"
+      }
+    ],
+    "description": "24-word phrase -> BIP-39 seed (empty passphrase) -> HKDF-BLAKE2s identity keys. `bad_phrase` must be rejected (BadRecoveryPhrase)."
+  },
+  "schema_version": 1,
+  "signing_payload": {
+    "cases": [
+      {
+        "canonical_body": "{\"decision\":\"approved\",\"req_id\":\"aa00\"}",
+        "context_utf8": "conveyance-approve-v1",
+        "payload_hex": "636f6e766579616e63652d617070726f76652d76317b226465636973696f6e223a22617070726f766564222c227265715f6964223a2261613030227d"
+      },
+      {
+        "canonical_body": "{\"executed_at\":9,\"req_id\":\"aa00\",\"status\":\"ok\"}",
+        "context_utf8": "conveyance-execute-v1",
+        "payload_hex": "636f6e766579616e63652d657865637574652d76317b2265786563757465645f6174223a392c227265715f6964223a2261613030222c22737461747573223a226f6b227d"
+      },
+      {
+        "canonical_body": "",
+        "context_utf8": "",
+        "payload_hex": ""
+      }
+    ],
+    "description": "context || canonical_json(body), plain byte concatenation, no separator."
+  }
+}

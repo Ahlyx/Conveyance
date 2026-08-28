@@ -62,6 +62,18 @@ jobs:
       # sets ANDROID_NDK_LATEST_HOME by default.
       - run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
 
+      # Fixture drift gate. crypto_fixtures.json is ground truth for the
+      # instrumented Rust<->Kotlin parity suite; regenerate it from
+      # conveyance-crypto and fail if it differs from the committed copy,
+      # so a change to a primitive that is not mirrored into the fixture
+      # (and thus into the Kotlin assertion) cannot land silently.
+      - name: Regenerate crypto fixtures and check for drift
+        run: |
+          cargo run --locked -p conveyance-crypto --example emit_fixtures -- \
+            android/app/src/androidTest/assets/crypto_fixtures.json
+          git diff --exit-code -- android/app/src/androidTest/assets/crypto_fixtures.json \
+            || { echo "::error::crypto_fixtures.json is stale; run the emitter and commit it"; exit 1; }
+
       - uses: gradle/actions/setup-gradle@v4
 
       - run: chmod +x ./gradlew
