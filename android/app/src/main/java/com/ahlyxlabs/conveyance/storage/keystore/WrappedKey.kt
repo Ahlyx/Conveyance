@@ -21,10 +21,21 @@ object WrappedKey {
     private const val IV_LEN = 12
     private const val TAG_BITS = 128
 
-    /** Wrap [contentKey] (must be 32 bytes). */
-    fun wrap(key: SecretKey, contentKey: ByteArray): ByteArray {
+    /** Wrap [contentKey] (must be 32 bytes) with a non-auth key. */
+    fun wrap(key: SecretKey, contentKey: ByteArray): ByteArray =
+        finishEncrypt(encryptCipher(key), contentKey)
+
+    /**
+     * Build the encrypt `Cipher` (fresh IV). For a
+     * [conveyance_tier1][KeystoreKeys.tier1] key, hand this to
+     * [BiometricGate.authorize] before [finishEncrypt].
+     */
+    fun encryptCipher(key: SecretKey): Cipher =
+        Cipher.getInstance(TRANSFORM).apply { init(Cipher.ENCRYPT_MODE, key) }
+
+    /** Run the (already-authorized, if needed) [cipher] over [contentKey]; prepends the IV. */
+    fun finishEncrypt(cipher: Cipher, contentKey: ByteArray): ByteArray {
         require(contentKey.size == 32) { "content key must be 32 bytes, got ${contentKey.size}" }
-        val cipher = Cipher.getInstance(TRANSFORM).apply { init(Cipher.ENCRYPT_MODE, key) }
         val iv = cipher.iv
         check(iv.size == IV_LEN) { "unexpected GCM IV length ${iv.size}" }
         return iv + cipher.doFinal(contentKey)

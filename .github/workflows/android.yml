@@ -132,11 +132,12 @@ jobs:
                   classes.add(tc.get("classname", ""))
           print(f"instrumented tests: {total}, failures+errors: {bad}")
           print("classes:", ", ".join(sorted(classes)))
-          if total < 12:
-              sys.exit(f"expected >= 12 instrumented tests, saw {total}")
+          if total < 16:
+              sys.exit(f"expected >= 16 instrumented tests, saw {total}")
           required = [
               "com.ahlyxlabs.conveyance.crypto.CryptoFixtureParityTest",
               "com.ahlyxlabs.conveyance.storage.keystore.KeystoreKeysTest",
+              "com.ahlyxlabs.conveyance.storage.identity.IdentityVaultTest",
           ]
           missing = [c for c in required if c not in classes]
           if missing:
