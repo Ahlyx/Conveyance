@@ -109,6 +109,9 @@ interface ConveyanceCrypto {
     /** `prev_hash` for the first row in any chain: 32 zero bytes. */
     fun genesisPrevHash(): ByteArray
 
+    /** The canonical JSON bytes (as text) that [rowHash] is taken over. */
+    fun eventContentJson(event: LogEvent): String
+
     /** `SHA256(prevHash || event_content_json(event))`. */
     fun rowHash(prevHash: ByteArray, event: LogEvent): ByteArray
 

@@ -107,8 +107,9 @@ jobs:
             connectedDebugAndroidTest
 
       # connectedDebugAndroidTest passes vacuously if it discovers no
-      # tests; the spike's whole point is that the HKDF round-trip
-      # actually executed on the emulator, so assert a non-zero count.
+      # tests. The Rust<->Kotlin fixture parity suite plus the HKDF spike
+      # round-trip must actually execute on the emulator, so assert a
+      # floor well below their real count (parity suite 9 + spike 3 = 12).
       - name: Verify instrumented tests ran
         run: |
           python3 - <<'PY'
@@ -120,13 +121,19 @@ jobs:
           if not files:
               sys.exit("no instrumented test result XML found")
           total = bad = 0
+          classes = set()
           for f in files:
               r = ET.parse(f).getroot()
               total += int(r.get("tests", 0))
               bad += int(r.get("failures", 0)) + int(r.get("errors", 0))
+              for tc in r.iter("testcase"):
+                  classes.add(tc.get("classname", ""))
           print(f"instrumented tests: {total}, failures+errors: {bad}")
-          if total < 1:
-              sys.exit("expected >= 1 instrumented test")
+          print("classes:", ", ".join(sorted(classes)))
+          if total < 10:
+              sys.exit(f"expected >= 10 instrumented tests, saw {total}")
+          if "com.ahlyxlabs.conveyance.crypto.CryptoFixtureParityTest" not in classes:
+              sys.exit("CryptoFixtureParityTest did not run")
           if bad:
               sys.exit("instrumented test failure")
           PY

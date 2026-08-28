@@ -14,6 +14,7 @@ import uniffi.conveyance_crypto_ffi.ed25519PublicFromSecret
 import uniffi.conveyance_crypto_ffi.ed25519Sign
 import uniffi.conveyance_crypto_ffi.ed25519Verify
 import uniffi.conveyance_crypto_ffi.generateRecoveryPhrase as ffiGenerateRecoveryPhrase
+import uniffi.conveyance_crypto_ffi.hashChainEventContentJson
 import uniffi.conveyance_crypto_ffi.hashChainGenesisPrevHash
 import uniffi.conveyance_crypto_ffi.hashChainRowHash
 import uniffi.conveyance_crypto_ffi.hashChainVerify
@@ -101,6 +102,9 @@ class UniffiConveyanceCrypto @Inject constructor() : ConveyanceCrypto {
     }
 
     override fun genesisPrevHash(): ByteArray = hashChainGenesisPrevHash()
+
+    override fun eventContentJson(event: LogEvent): String =
+        guard { hashChainEventContentJson(event.toFfi()) }
 
     override fun rowHash(prevHash: ByteArray, event: LogEvent): ByteArray =
         guard { hashChainRowHash(prevHash, event.toFfi()) }
