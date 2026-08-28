@@ -54,6 +54,7 @@ pub fn build_document() -> Value {
         "recovery": recovery_fixture(),
         "sealed_identity": sealed_identity_fixture(),
         "hash_chain": hash_chain_fixture(),
+        "phone_log_row": phone_log_row_fixture(),
     })
 }
 
@@ -355,6 +356,58 @@ fn sealed_identity_fixture() -> Value {
     })
 }
 
+// -- Phone-log export row (Phase 10.2b) -------------------------
+
+/// Context tag for a signed phone-log export row. Must equal
+/// `conveyance_core::storage::logdiff::PHONE_LOG_CONTEXT` — the diff tool
+/// verifies rows against exactly this preimage.
+const PHONE_LOG_CONTEXT: &[u8] = b"conveyance-phone-log-v1";
+
+fn phone_log_row_fixture() -> Value {
+    // Fixed row + the zeros-phrase Ed25519 identity key. The Android
+    // approval-log export must produce `signing_payload_hex` for this row
+    // and an Ed25519 signature that verifies — that is the phone->PC
+    // log-diff contract.
+    let event = LogEvent {
+        req_id: [0x11u8; 16],
+        event_type: "approval_granted".to_string(),
+        payload_json: r#"{"decision":"approved","reason":"user_tap"}"#.to_string(),
+        timestamp: 1_700_000_123,
+    };
+    let content = String::from_utf8(hashchain::event_content_json(&event)).unwrap();
+    let payload = signing_payload(PHONE_LOG_CONTEXT, &content);
+
+    let phrase = RecoveryPhrase::from_words(recovery_zeros_phrase()).unwrap();
+    let ed_secret = *phrase
+        .to_seed("")
+        .derive_identity_keys()
+        .ed25519_secret
+        .expose();
+    let sk = IdentitySecretKey::from_bytes(ed_secret);
+
+    json!({
+        "description": "One signed phone-log export row. signing_payload_hex is \
+                        \"conveyance-phone-log-v1\" || event_content_json({req_id, event_type, \
+                        payload_json, timestamp}); signature_hex is Ed25519 over it by the \
+                        zeros-phrase identity key. The exported JSONL line carries \
+                        {req_id, event_type, payload_json, timestamp, signature}.",
+        "req_id_hex": hex(&event.req_id),
+        "event_type": event.event_type,
+        "payload_json": event.payload_json,
+        "timestamp": event.timestamp,
+        "event_content_json": content,
+        "signing_payload_hex": hex(&payload),
+        "ed25519_public_hex": hex(&sk.public_key().to_bytes()),
+        "signature_hex": hex(&sk.sign(&payload)),
+    })
+}
+
+fn recovery_zeros_phrase() -> &'static str {
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+     abandon abandon abandon abandon abandon abandon abandon abandon abandon \
+     abandon abandon abandon abandon abandon art"
+}
+
 // -- Hash chain ---------------------------------------------------
 
 fn chain_event(n: u8) -> LogEvent {
@@ -444,6 +497,7 @@ mod tests {
             "recovery",
             "sealed_identity",
             "hash_chain",
+            "phone_log_row",
         ] {
             assert!(d.get(key).is_some(), "missing fixture group {key}");
         }

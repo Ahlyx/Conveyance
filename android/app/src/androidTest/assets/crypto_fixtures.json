@@ -269,6 +269,17 @@
     ],
     "description": "HKDF-BLAKE2s (RFC 5869), salt omitted = 32 zero bytes. Frozen to conveyance-crypto; no third-party vectors exist."
   },
+  "phone_log_row": {
+    "description": "One signed phone-log export row. signing_payload_hex is \"conveyance-phone-log-v1\" || event_content_json({req_id, event_type, payload_json, timestamp}); signature_hex is Ed25519 over it by the zeros-phrase identity key. The exported JSONL line carries {req_id, event_type, payload_json, timestamp, signature}.",
+    "ed25519_public_hex": "95dbfb758f5764904c5dee525766c2161100b46991e223c6b44399a2284895f1",
+    "event_content_json": "{\"event_type\":\"approval_granted\",\"payload_json\":\"{\\\"decision\\\":\\\"approved\\\",\\\"reason\\\":\\\"user_tap\\\"}\",\"req_id\":\"11111111111111111111111111111111\",\"timestamp\":1700000123}",
+    "event_type": "approval_granted",
+    "payload_json": "{\"decision\":\"approved\",\"reason\":\"user_tap\"}",
+    "req_id_hex": "11111111111111111111111111111111",
+    "signature_hex": "121c9c1c3f5b2daf60473041465841cad7fb7164272886c495a540d259f4ac6ceb38f3d800e813286c6620bb9127304cce417bf7cd46c95b6b7cc12612e62202",
+    "signing_payload_hex": "636f6e766579616e63652d70686f6e652d6c6f672d76317b226576656e745f74797065223a22617070726f76616c5f6772616e746564222c227061796c6f61645f6a736f6e223a227b5c226465636973696f6e5c223a5c22617070726f7665645c222c5c22726561736f6e5c223a5c22757365725f7461705c227d222c227265715f6964223a223131313131313131313131313131313131313131313131313131313131313131222c2274696d657374616d70223a313730303030303132337d",
+    "timestamp": 1700000123
+  },
   "recovery": {
     "bad_phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon zoo",
     "cases": [

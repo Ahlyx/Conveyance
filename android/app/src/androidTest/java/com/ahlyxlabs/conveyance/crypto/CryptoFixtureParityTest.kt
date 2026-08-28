@@ -217,6 +217,31 @@ class CryptoFixtureParityTest {
         assertBrokenAt(group.getJSONObject("link_broken"), "LinkBroken")
     }
 
+    @Test
+    fun phoneLogRow() {
+        val g = fixtures.getJSONObject("phone_log_row")
+        val event = LogEvent(
+            reqId = g.getString("req_id_hex").hex(),
+            eventType = g.getString("event_type"),
+            payloadJson = g.getString("payload_json"),
+            timestamp = g.getLong("timestamp"),
+        )
+        assertEquals(g.getString("event_content_json"), crypto.eventContentJson(event))
+
+        val payload = crypto.signingPayload(
+            SigningContext.PHONE_LOG,
+            crypto.eventContentJson(event),
+        )
+        assertHex(g.getString("signing_payload_hex"), payload)
+
+        val verified = crypto.verify(
+            Ed25519PublicKey(g.getString("ed25519_public_hex").hex()),
+            payload,
+            Ed25519Signature(g.getString("signature_hex").hex()),
+        )
+        assertTrue(verified.isSuccess)
+    }
+
     // -- helpers -----------------------------------------------------------
 
     private fun assertBrokenAt(obj: JSONObject, kind: String) {

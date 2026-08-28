@@ -134,6 +134,13 @@ value class SigningContext(val bytes: ByteArray) {
 
         /** `"conveyance-execute-v1"` — ExecuteResponse signatures. */
         val EXECUTE = SigningContext("conveyance-execute-v1".toByteArray(Charsets.US_ASCII))
+
+        /**
+         * `"conveyance-phone-log-v1"` — signed rows in an approval-log
+         * export. Must equal `conveyance_core::storage::logdiff::PHONE_LOG_CONTEXT`;
+         * the PC diff tool verifies against exactly this preimage.
+         */
+        val PHONE_LOG = SigningContext("conveyance-phone-log-v1".toByteArray(Charsets.US_ASCII))
     }
 }
 
