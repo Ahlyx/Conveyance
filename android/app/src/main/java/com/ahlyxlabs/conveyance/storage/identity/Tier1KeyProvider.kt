@@ -20,7 +20,7 @@ class KeystoreTier1KeyProvider @Inject constructor(
     private val keys: KeystoreKeys,
 ) : Tier1KeyProvider {
     override fun key(): SecretKey {
-        keys.ensureProvisioned()
+        keys.ensureTier1Key()
         return keys.tier1()
     }
 }

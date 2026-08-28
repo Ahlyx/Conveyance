@@ -9,9 +9,10 @@ import com.ahlyxlabs.conveyance.crypto.RecoveryPhrase
 import com.ahlyxlabs.conveyance.crypto.SealedIdentityCrypto
 import com.ahlyxlabs.conveyance.crypto.UniffiConveyanceCrypto
 import com.ahlyxlabs.conveyance.crypto.UniffiSealedIdentityCrypto
+import com.ahlyxlabs.conveyance.storage.FakeBiometricGate
+import com.ahlyxlabs.conveyance.storage.StubTier1KeyProvider
 import com.ahlyxlabs.conveyance.storage.keystore.AuthPurpose
 import java.io.File
-import javax.crypto.KeyGenerator
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -39,11 +40,7 @@ class IdentityVaultTest {
     private val sealed: SealedIdentityCrypto = UniffiSealedIdentityCrypto()
     private val crypto: ConveyanceCrypto = UniffiConveyanceCrypto()
 
-    private val stubTier1 = object : Tier1KeyProvider {
-        private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
-        override fun key() = key
-    }
-    private val vault = IdentityVault(context, sealed, stubTier1)
+    private val vault = IdentityVault(context, sealed, StubTier1KeyProvider())
 
     private val zeros =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon " +

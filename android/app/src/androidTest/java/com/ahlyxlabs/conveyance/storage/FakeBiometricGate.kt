@@ -1,4 +1,4 @@
-package com.ahlyxlabs.conveyance.storage.identity
+package com.ahlyxlabs.conveyance.storage
 
 import com.ahlyxlabs.conveyance.storage.keystore.AuthPurpose
 import com.ahlyxlabs.conveyance.storage.keystore.BiometricGate

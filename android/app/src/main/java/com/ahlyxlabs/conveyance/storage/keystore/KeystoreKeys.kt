@@ -43,14 +43,30 @@ class KeystoreKeys @Inject constructor(
     }
 
     /**
-     * Create whichever keys are absent. Idempotent.
+     * Create both keys if absent. Idempotent.
      *
      * @throws MissingLockScreenException if `conveyance_tier1` cannot be
      *   created because the device has no secure lock screen. `conveyance_db`
-     *   is created regardless.
+     *   is created regardless. Callers that only need one key should use
+     *   [ensureDbKey] / [ensureTier1Key] so a missing lock screen does not
+     *   block the operational databases.
      */
     fun ensureProvisioned() {
+        ensureDbKey()
+        ensureTier1Key()
+    }
+
+    /** Provision `conveyance_db` if absent. No lock-screen requirement. */
+    fun ensureDbKey() {
         if (!keyStore.containsAlias(DB_ALIAS)) generateDbKey()
+    }
+
+    /**
+     * Provision `conveyance_tier1` if absent.
+     *
+     * @throws MissingLockScreenException if the device has no secure lock screen.
+     */
+    fun ensureTier1Key() {
         if (!keyStore.containsAlias(TIER1_ALIAS)) generateTier1Key()
     }
 

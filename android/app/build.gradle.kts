@@ -191,6 +191,14 @@ dependencies {
     // (a plain jar resolves but crashes at runtime on device).
     implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
 
+    // Phase 10.2b encrypted storage. Room over SQLCipher: the app never
+    // opens an unencrypted DB.
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+    implementation(libs.androidx.sqlite)
+    implementation(libs.sqlcipher.android)
+
     testImplementation(libs.junit)
 
     androidTestImplementation(libs.androidx.test.ext.junit)

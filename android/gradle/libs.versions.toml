@@ -30,6 +30,15 @@ jna = "5.14.0"
 androidxTestExtJunit = "1.2.1"
 androidxTestRunner = "1.6.2"
 
+# Phase 10.2b encrypted storage. Room 2.6.1 is the last release that
+# works with the KSP 1.0.x pinned above; androidx.sqlite 2.4.0 is its
+# paired version. SQLCipher via net.zetetic:sqlcipher-android (the
+# maintained successor to android-database-sqlcipher); it supplies the
+# SupportSQLiteOpenHelper.Factory Room opens the encrypted DB through.
+room = "2.6.1"
+androidxSqlite = "2.4.0"
+sqlcipher = "4.6.1"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
@@ -47,6 +56,11 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+androidx-sqlite = { group = "androidx.sqlite", name = "sqlite", version.ref = "androidxSqlite" }
+sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
