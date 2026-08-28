@@ -390,7 +390,10 @@ impl ExecuteResponse {
 ///
 /// The signature FIELD is removed from the produced JSON entirely (spec
 /// amendment): optional fields absent are omitted, never null, and the
-/// signature itself must not appear in what it covers.
+/// signature itself must not appear in what it covers. The final
+/// `context || body` join is [`crate::crypto::signing::signing_payload`],
+/// so the daemon and the Android side (which signs over the same bytes
+/// through `conveyance-crypto-ffi`) share one definition of the join.
 fn signing_payload<T: Serialize>(context: &[u8], msg: &T) -> Result<Vec<u8>, ProtocolError> {
     let mut value = serde_json::to_value(msg).map_err(|e| ProtocolError::Cbor(e.to_string()))?;
     let removed = value.as_object_mut().and_then(|m| m.remove("signature"));
@@ -399,10 +402,7 @@ fn signing_payload<T: Serialize>(context: &[u8], msg: &T) -> Result<Vec<u8>, Pro
         "signed messages must carry a signature field"
     );
     let canonical = canonicalize(&value)?;
-    let mut out = Vec::with_capacity(context.len() + canonical.len());
-    out.extend_from_slice(context);
-    out.extend_from_slice(canonical.as_bytes());
-    Ok(out)
+    Ok(crate::crypto::signing::signing_payload(context, &canonical))
 }
 
 /// 64-byte signature arrays: bytes on CBOR, hex on JSON (same dual-context
@@ -679,15 +679,15 @@ mod tests {
         assert!(!json_text.contains("http_status"), "{json_text}");
     }
 
-    /// Parity pin for `conveyance_crypto::signing::signing_payload`: the
-    /// standalone primitive (which the Android FFI bridge signs over) must
-    /// produce byte-identical output to this module's inline
-    /// `context || canonical_json` concatenation. If the two ever diverge,
-    /// phone and PC sign different preimages and every cross-side
-    /// signature fails. A follow-up will collapse the inline join here
-    /// into a call to the primitive; until then, this asserts they match.
+    /// Pins the payload pipeline now that the `context || body` join
+    /// delegates to `crate::crypto::signing::signing_payload`: the
+    /// `signature` field is removed, the remainder is canonicalized, and
+    /// the raw context bytes are prefixed with no separator. Built here
+    /// against an independent hand-rolled reference (not the primitive),
+    /// so a regression in remove-signature / canonicalize / prefix still
+    /// fails even though the final concat is shared code.
     #[test]
-    fn signing_payload_matches_the_crypto_primitive() {
+    fn signing_payload_is_context_then_canonical_json_minus_signature() {
         let key = IdentitySecretKey::generate(&CounterEntropy).unwrap();
         let id = sample_req_id(7);
 
@@ -700,17 +700,15 @@ mod tests {
                 &key,
             ),
         ] {
-            let via_inline = signing_payload(APPROVE_CONTEXT, &resp).unwrap();
+            let produced = signing_payload(APPROVE_CONTEXT, &resp).unwrap();
 
-            // Rebuild `canonical_body` the way the inline path does, then
-            // join via the primitive.
             let mut value = serde_json::to_value(&resp).unwrap();
             value.as_object_mut().unwrap().remove("signature");
             let canonical = canonicalize(&value).unwrap();
-            let via_primitive =
-                conveyance_crypto::signing::signing_payload(APPROVE_CONTEXT, &canonical);
+            let mut reference = APPROVE_CONTEXT.to_vec();
+            reference.extend_from_slice(canonical.as_bytes());
 
-            assert_eq!(via_inline, via_primitive);
+            assert_eq!(produced, reference);
         }
     }
 

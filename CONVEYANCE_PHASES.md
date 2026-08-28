@@ -671,8 +671,10 @@ Follow persistent rules. Propose your plan before writing code.
   Jetpack Compose, DI (Hilt), CI.
 - **10.1** — Crypto core in Kotlin (or JNI wrapper around the Rust
   conveyance-core::crypto module — decision point, see below).
-- **10.2** — Encrypted storage: Room with SQLCipher, Android Keystore
-  integration, credential store, approval log.
+- **10.2** — Encrypted storage. Split into **10.2a** (Android Keystore
+  key provisioning + Rust-owned sealed identity + identity vault) and
+  **10.2b** (Room + SQLCipher databases: credentials, approval log,
+  pairings). See the dedicated blocks below.
 - **10.3** — BLE peripheral + GATT server, framing (same wire
   protocol as PC side).
 - **10.4** — Noise KK session (Kotlin implementation or JNI to Rust —
@@ -704,6 +706,101 @@ spike succeeds, proceed with UniFFI for the full 10.1 surface. If the
 spike fails, do not silently fall back — report what failed and decide
 deliberately whether to invest further in UniFFI or accept the
 significant downstream cost of hand-rolling Noise in Kotlin.
+
+### Phase 10.2 — Encrypted storage
+
+Split into two sub-phases during planning, same reasoning as the Phase 7
+split: the original single phase composed the Android Keystore key model,
+a new Rust-owned key-handle type, an identity vault, and three separate
+encrypted SQLite databases — more than one review gate. 10.2a is the
+security-critical core (nothing plaintext-identity-bearing crosses the
+FFI); 10.2b is the encrypted-database layer built on top of it.
+
+The 10.1 `ConveyanceCrypto` interface is the seam: it has no production
+consumers yet, so 10.2a is free to introduce a handle-based identity API
+without touching call sites. `ConveyanceCrypto.deriveIdentity` (raw key
+bytes) is retained solely as the cross-implementation verification path
+for the fixture parity suite; it is not on the production unlock path.
+
+#### Phase 10.2a — Keystore, sealed identity, identity vault
+
+**Scope.** Android Keystore key provisioning with the spec-mandated Tier
+1 flags. A Rust-owned `UnlockedIdentity` UniFFI object: identity Ed25519
+and X25519 secret scalars are derived, sealed into `identity.enc`,
+opened, and signed with entirely inside `conveyance-crypto`; Kotlin holds
+only an opaque handle. An `IdentityVault` that creates the sealed
+identity from a recovery phrase at first run and unlocks it under
+BiometricPrompt. No databases, no BLE, no Noise, no pairing logic, no UI.
+
+Two Keystore keys, on the right security axis:
+
+- `conveyance_tier1` — AES-GCM-wraps the identity content key and each
+  per-service credential DEK. `setUserAuthenticationRequired(true)`,
+  `setUserAuthenticationParameters(0, BIOMETRIC_STRONG | DEVICE_CREDENTIAL)`
+  (fresh auth every use), `setInvalidatedByBiometricEnrollment(true)`,
+  `setUnlockedDeviceRequired(true)`, StrongBox when available. These are
+  security requirements from the spec's "Phone-side components" section,
+  not optional hardening.
+- `conveyance_db` — AES-GCM-wraps the shared SQLCipher passphrase for the
+  operational databases (10.2b). `setUserAuthenticationRequired(false)`
+  deliberately: the approval log must accept writes throughout an active
+  session without re-prompting. This key defends against offline
+  extraction of storage obtained without a live session, not against a
+  running compromised app (addressed by the Android sandbox and by
+  biometric auth at session start).
+
+**Exit criteria.**
+
+- Keystore keys provision on the emulator; `KeyInfo` confirms
+  `isUserAuthenticationRequired` and `isInvalidatedByBiometricEnrollment`
+  are set on `conveyance_tier1`, and StrongBox is used when the device
+  advertises it (software TEE fallback otherwise, no crash).
+- Identity secret scalars never appear as a JVM value: verified by
+  inspection of the FFI surface (no export returns them) and by the vault
+  API shape (`unlock` returns an opaque handle).
+- Round trip: `createFromPhrase` → persist `identity.enc` → `unlock`
+  under a mocked/authorized crypto object → `sign` → signature verifies
+  against the handle's public key via `ConveyanceCrypto`.
+- Wrong content key → `DecryptionFailed`; truncated/version-mismatched
+  blob → `DecryptionFailed`, no panic.
+- `KeyPermanentlyInvalidatedException` handling path is exercised with a
+  mocked cipher (recovery flow initiates); real enrollment-change
+  triggering is deferred to Phase 11 hardware testing.
+- `identity.enc` is versioned; a raw read of the file is not plaintext
+  key material.
+- Fixture parity suite still green (extended with a `sealed_identity`
+  group); the drift gate still enforced in `cargo test` and CI.
+
+#### Phase 10.2b — Encrypted databases
+
+**Scope.** Three Room + SQLCipher databases. `credentials.enc`: per-row
+secret encrypted with a per-service DEK (`conveyance_tier1`-wrapped),
+sealed and opened one row at a time in Rust — never decrypted in bulk.
+`approvals.db`: the hash-chained approval log (spec "Logging" schema
+verbatim), append computing the chain via `ConveyanceCrypto.rowHash`,
+`verify` via `ConveyanceCrypto.verifyChain`, JSONL export of signed rows
+for `conveyance log diff`. `pairings.db`: schema and DAO only — no
+ceremony producers yet (10.5). All three behind SQLCipher with the
+shared `conveyance_db`-wrapped passphrase. Hilt wiring. No UI.
+
+**Exit criteria.**
+
+- Credential add / list (names only) / remove / open one round-trips on
+  the emulator; a raw read of `credentials.enc` shows no plaintext secret
+  or service DEK.
+- Approval-log append builds a valid chain; `verify` reports intact for a
+  clean chain, `ContentTampered` for an altered row, `LinkBroken` for a
+  removed interior row.
+- Concurrent appends serialize to a single valid chain (single-writer
+  discipline, mirroring auditmcp).
+- JSONL export produces one canonical-JSON object per row, signed with
+  the phone identity; unsigned rows are never emitted.
+- `pairings.db` schema is created via migration; DAO insert/query/delete
+  round-trips.
+- All three DB files are SQLCipher-encrypted at rest (raw bytes are not a
+  readable SQLite header).
+- Instrumented CI runs the new storage tests; `android.yml` asserts they
+  executed.
 
 **Prompt for Phase 10.0 (scaffolding — start here):**
 
