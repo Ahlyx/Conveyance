@@ -406,6 +406,11 @@ Sessions end via:
 - Idle timeout expired
 - Hard-cap expired
 - BLE disconnection (both sides tear down immediately; MUST NOT auto-reconnect)
+- Loss of the `phone_to_pc_tx` notification subscription — the central
+  clearing the CCCD without dropping the ACL connection. Phone→PC traffic
+  is undeliverable without it, so this is equivalent to BLE disconnection
+  for teardown purposes: both sides tear down immediately and MUST NOT
+  auto-resubscribe.
 - User taps "End session" on the phone
 - User invokes `conveyance session end` on the PC
 - Kill switch (see below)
@@ -451,7 +456,7 @@ handles any MTU ≥ 23 (the BLE minimum).
 ### Framing
 
 Each application-layer message is length-prefixed and may be split across
-multiple GATT operations if it exceeds the negotiated MTU minus overhead:
+multiple frames if it exceeds the negotiated MTU minus overhead:
 
 ```
 struct Frame {
@@ -463,11 +468,32 @@ struct Frame {
 }
 ```
 
-- A message fitting in one MTU: `START | END`, one frame.
+The 6-byte header is fixed. A frame — header plus payload — MUST fit in a
+single GATT operation: one ATT write (`pc_to_phone_tx`) or one ATT
+notification (`phone_to_pc_tx`). The sender MUST size payloads so that
+
+```
+6 + payload.length  ≤  negotiated_ATT_MTU − 3
+```
+
+i.e. `max_payload = negotiated_ATT_MTU − 3 − 6`. The `− 3` is ATT opcode
+plus attribute handle; the `− 6` is this header. At the 23-byte BLE
+minimum this leaves 14 payload bytes per frame. A sender that has not yet
+observed an MTU exchange MUST assume 23. Receivers still buffer the raw
+byte stream and reassemble frames from it (a peer that violates the
+sizing rule, or a stack that fragments anyway, does not desynchronise
+reassembly), but a conformant sender never emits an over-MTU frame.
+
+- A message fitting one frame: `START | END`, one frame.
 - A larger message: `START` frame, zero or more middle frames, `END`
   frame. Receiver reassembles by `seq` and joins payloads.
-- ACK frames carry no payload and confirm receipt of a message ID for
-  request/response correlation at the transport layer.
+- The `reserved` byte MUST be zero on send; a receiver MUST reject a
+  frame whose `reserved` byte is nonzero.
+- ACK frames carry no payload and echo the `seq` they acknowledge. They
+  consume no sequence number and are skipped by continuity checking. v1
+  has no retransmission: a conformant implementation neither emits ACKs
+  nor requires them, and MUST accept and ignore any it receives. The flag
+  is reserved for a future transport-correlation use.
 
 Reassembly buffer per side MUST be capped (default 128 KiB); a single
 message exceeding the cap causes the session to terminate with

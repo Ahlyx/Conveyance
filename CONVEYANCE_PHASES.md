@@ -676,7 +676,11 @@ Follow persistent rules. Propose your plan before writing code.
   **10.2b** (Room + SQLCipher databases: credentials, approval log,
   pairings). See the dedicated blocks below.
 - **10.3** — BLE peripheral + GATT server, framing (same wire
-  protocol as PC side).
+  protocol as PC side). Split into **10.3a** (Kotlin framing layer +
+  cross-impl fixture parity + the `conveyance-wire` leaf-crate extract +
+  the `PhoneLink` transport seam, all JVM-testable) and **10.3b** (the
+  Android `BluetoothGattServer` + advertiser + permissions + disconnect
+  handling, emulator/device-bound). Full review gate between them.
 - **10.4** — Noise KK session (Kotlin implementation or JNI to Rust —
   same decision as 10.1).
 - **10.5** — Pairing ceremony (phone side): QR scanner, PairingConfirm
