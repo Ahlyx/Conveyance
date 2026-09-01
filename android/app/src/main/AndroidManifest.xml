@@ -3,11 +3,17 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      Phase 10.0 declares NO permissions. Bluetooth (BLUETOOTH_SCAN /
-      BLUETOOTH_ADVERTISE / BLUETOOTH_CONNECT), camera (QR scanner),
-      foreground-service, and notification permissions are added by the
-      sub-phases that use them, so the requested surface always matches
-      what the code actually does.
+      Camera (QR scanner), foreground-service, and notification
+      permissions are added by the sub-phases that use them, so the
+      requested surface always matches what the code actually does.
+
+      BLE (Phase 10.3b): the phone ADVERTISES and runs a GATT SERVER; it
+      never scans, so no BLUETOOTH_SCAN and no location permission. On
+      API <= 30 BLUETOOTH / BLUETOOTH_ADMIN are install-time (capped with
+      maxSdkVersion). On API 31+ BLUETOOTH_ADVERTISE and BLUETOOTH_CONNECT
+      are runtime, requested at first session start (see BlePermissions).
+      bluetooth_le is required: a device without BLE cannot serve the
+      phone role at all.
 
       allowBackup=false: per the spec's "Storage layout", phone-side
       state is device-bound and recovery is via the 24-word phrase, never
@@ -15,6 +21,19 @@
       state the same exclusion explicitly for the API levels that read
       them (allowBackup alone is deprecated from Android 12).
     -->
+
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="true" />
+
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:name=".ConveyanceApp"
