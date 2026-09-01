@@ -106,72 +106,11 @@ pub trait Transport {
     ) -> impl Future<Output = Result<Self::Link, TransportError>> + Send;
 }
 
-/// Reassembles raw link bytes into whole phase-4 application messages.
-///
-/// Why this exists separately from a bare `wire::framing::Framer`: GATT
-/// operations are bounded by negotiated MTU, which can be SMALLER than a
-/// frame -- so one frame may arrive as several notifications, and frames
-/// themselves chain into messages. This type buffers the byte stream,
-/// slices out complete frames, runs every framing rule (reserved byte,
-/// flag legality, sequence continuity, 128 KiB caps) through ONE
-/// persistent validator so nothing drifts between layers, and yields
-/// finished application messages. One per direction; discard with the
-/// link on disconnect.
-#[derive(Debug, Default)]
-pub struct InboundAssembler {
-    buffer: Vec<u8>,
-    framer: crate::wire::framing::Framer,
-}
-
-impl InboundAssembler {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Feed inbound bytes; returns every application message that
-    /// completed, in order. Errors are the framing layer's own; a hostile
-    /// length prefix trips `MessageTooLarge` before we buffer toward it.
-    pub fn ingest(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, crate::wire::ProtocolError> {
-        use crate::wire::framing::{self, FrameError, HEADER_LEN};
-
-        const CAP: usize = framing::DEFAULT_REASSEMBLY_CAP;
-        self.buffer.extend_from_slice(bytes);
-        if self.buffer.len() > CAP {
-            return Err(FrameError::MessageTooLarge {
-                size: self.buffer.len(),
-                cap: CAP,
-            }
-            .into());
-        }
-
-        let mut messages = Vec::new();
-        loop {
-            if self.buffer.len() < HEADER_LEN {
-                return Ok(messages);
-            }
-            let declared = u16::from_be_bytes([self.buffer[0], self.buffer[1]]) as usize;
-
-            // Validate the length prefix against the cap BEFORE draining:
-            // never allocate toward an attacker-chosen size.
-            if declared > CAP {
-                return Err(FrameError::MessageTooLarge {
-                    size: declared,
-                    cap: CAP,
-                }
-                .into());
-            }
-            let total = HEADER_LEN + declared;
-            if self.buffer.len() < total {
-                return Ok(messages);
-            }
-            let frame: Vec<u8> = self.buffer.drain(..total).collect();
-
-            if let Some(message) = self.framer.ingest(&frame)? {
-                messages.push(message);
-            }
-        }
-    }
-}
+/// Byte-stream reassembly for a sub-MTU transport. Defined in
+/// `conveyance-wire` alongside `Framer` (phase 10.3) so the Android port
+/// mirrors one implementation; re-exported here because the daemon's
+/// session loop drives it through `conveyance_core::transport`.
+pub use conveyance_wire::InboundAssembler;
 
 /// Shared behavior every Link implementation must exhibit. Run against
 /// the mock in CI; the real BLE side cannot self-loopback (a radio cannot
