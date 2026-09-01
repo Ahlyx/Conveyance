@@ -186,6 +186,8 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
+    implementation(libs.kotlinx.coroutines.android)
+
     // Phase 10.1 UniFFI spike. The generated crypto bindings call through
     // JNA; the @aar variant carries JNA's per-ABI native dispatch libs
     // (a plain jar resolves but crashes at runtime on device).
@@ -204,6 +206,7 @@ dependencies {
     // stub throws on the JVM). Must precede any android.jar on the
     // unit-test classpath, which testImplementation does.
     testImplementation(libs.org.json)
+    testImplementation(libs.kotlinx.coroutines.test)
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
