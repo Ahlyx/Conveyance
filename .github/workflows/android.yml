@@ -126,6 +126,38 @@ jobs:
             adb shell locksettings set-pin 0000 || echo "set-pin failed; tier1 key tests will skip"
             ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug connectedDebugAndroidTest
 
+      # testDebugUnitTest also passes vacuously if a suite silently stops
+      # being discovered. Assert a floor and that the framing fixture
+      # parity suite (Rust<->Kotlin wire-format drift gate) actually ran.
+      - name: Verify JVM unit tests ran
+        run: |
+          python3 - <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+          files = glob.glob("android/app/build/test-results/testDebugUnitTest/*.xml")
+          if not files:
+              sys.exit("no JVM unit test result XML found")
+          total = bad = 0
+          classes = set()
+          for f in files:
+              r = ET.parse(f).getroot()
+              total += int(r.get("tests", 0))
+              bad += int(r.get("failures", 0)) + int(r.get("errors", 0))
+              classes.add(r.get("name", ""))
+          print(f"JVM unit tests: {total}, failures+errors: {bad}")
+          print("classes:", ", ".join(sorted(classes)))
+          if total < 35:
+              sys.exit(f"expected >= 35 JVM unit tests, saw {total}")
+          required = [
+              "com.ahlyxlabs.conveyance.transport.framing.FramingFixtureParityTest",
+              "com.ahlyxlabs.conveyance.transport.framing.FramerTest",
+          ]
+          missing = [c for c in required if c not in classes]
+          if missing:
+              sys.exit(f"required JVM unit classes did not run: {missing}")
+          if bad:
+              sys.exit("JVM unit test failure")
+          PY
+
       # connectedDebugAndroidTest passes vacuously if it discovers no
       # tests. Assert a floor well below the real count and that the
       # classes carrying the security-critical assertions actually ran
@@ -168,7 +200,7 @@ jobs:
               sys.exit("instrumented test failure")
           PY
 
-      - name: Upload instrumented test report
+      - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -176,4 +208,6 @@ jobs:
           path: |
             android/app/build/reports/androidTests/
             android/app/build/outputs/androidTest-results/
+            android/app/build/reports/tests/
+            android/app/build/test-results/
           if-no-files-found: ignore

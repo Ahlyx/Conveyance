@@ -200,6 +200,10 @@ dependencies {
     implementation(libs.sqlcipher.android)
 
     testImplementation(libs.junit)
+    // Real org.json for the framing fixture-parity suite (android.jar's
+    // stub throws on the JVM). Must precede any android.jar on the
+    // unit-test classpath, which testImplementation does.
+    testImplementation(libs.org.json)
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
