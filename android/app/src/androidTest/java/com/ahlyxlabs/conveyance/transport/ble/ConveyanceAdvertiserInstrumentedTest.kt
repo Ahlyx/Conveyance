@@ -38,7 +38,13 @@ class ConveyanceAdvertiserInstrumentedTest {
             onUnavailable = { outcomes += "unavailable:${it.reason}"; latch.countDown() },
         )
 
-        assertTrue("no advertiser callback within 5s", latch.await(5, TimeUnit.SECONDS))
+        // Real hardware calls back in tens of ms; the emulator's radio
+        // never calls back and ConveyanceAdvertiser's watchdog fires at
+        // ~3 s. Give both room.
+        assertTrue(
+            "no advertiser outcome within 8s",
+            latch.await(8, TimeUnit.SECONDS),
+        )
         assertTrue("expected exactly one outcome, got $outcomes", outcomes.size == 1)
         advertiser.stop() // must not throw regardless of branch
     }

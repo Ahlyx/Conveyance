@@ -6,6 +6,8 @@ import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelUuid
 import androidx.annotation.RequiresPermission
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -21,21 +23,25 @@ import javax.inject.Singleton
  * battery"). This class is the start/stop mechanism; the *lifecycle* —
  * tying it to session state and a foreground service — is Phase 10.9.
  *
- * On a device whose radio cannot advertise (many emulators), [start]
- * reports [BleUnavailable.AdvertisingUnsupported] rather than crashing;
- * that is the path the CI emulator exercises.
+ * On a device that cannot advertise, [start] reports
+ * [BleUnavailable.AdvertisingUnsupported] rather than crashing. That
+ * covers three shapes: a null `bluetoothLeAdvertiser`, `startAdvertising`
+ * throwing, and — the emulator case — `startAdvertising` accepting the
+ * request but never calling `onStartSuccess` / `onStartFailure`, caught
+ * by [START_WATCHDOG_MS].
  */
 @Singleton
 class ConveyanceAdvertiser @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var activeCallback: AdvertiseCallback? = null
+    private var watchdog: Runnable? = null
+    private var outcomeDelivered = false
 
     /**
-     * Begin advertising. [onStarted] fires on `onStartSuccess`;
-     * [onUnavailable] fires for an off adapter, a radio that cannot
-     * advertise, an already-running advertisement, a revoked permission,
-     * or any start failure. Exactly one of the two is invoked.
+     * Begin advertising. Exactly one of [onStarted] / [onUnavailable] is
+     * invoked, within [START_WATCHDOG_MS] at the latest.
      *
      * Callers must hold `BLUETOOTH_ADVERTISE` (API 31+) — checked via
      * [BlePermissions] at session start. A mid-session revocation still
@@ -47,6 +53,7 @@ class ConveyanceAdvertiser @Inject constructor(
             onUnavailable(BleUnavailable.AlreadyActive)
             return
         }
+        outcomeDelivered = false
         val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
         if (adapter == null || !adapter.isEnabled) {
             onUnavailable(BleUnavailable.AdapterOff)
@@ -71,25 +78,50 @@ class ConveyanceAdvertiser @Inject constructor(
             .build()
 
         val callback = object : AdvertiseCallback() {
-            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) = onStarted()
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+                // Keep activeCallback: stop() needs it to stopAdvertising.
+                if (consume(this)) onStarted()
+            }
 
             override fun onStartFailure(errorCode: Int) {
-                activeCallback = null
-                onUnavailable(mapAdvertiseError(errorCode))
+                if (consume(this)) {
+                    activeCallback = null
+                    onUnavailable(mapAdvertiseError(errorCode))
+                }
             }
         }
         activeCallback = callback
+
+        val wd = Runnable {
+            if (consume(callback)) {
+                stop() // clears activeCallback and tries to stopAdvertising
+                onUnavailable(BleUnavailable.AdvertisingUnsupported)
+            }
+        }
+        watchdog = wd
+        mainHandler.postDelayed(wd, START_WATCHDOG_MS)
+
         try {
             advertiser.startAdvertising(settings, data, callback)
         } catch (_: SecurityException) {
-            activeCallback = null
-            onUnavailable(BleUnavailable.PermissionDenied)
+            if (consume(callback)) {
+                activeCallback = null
+                onUnavailable(BleUnavailable.PermissionDenied)
+            }
+        } catch (_: RuntimeException) {
+            // IllegalStateException / NPE from a framework in a bad state.
+            if (consume(callback)) {
+                activeCallback = null
+                onUnavailable(BleUnavailable.AdvertisingUnsupported)
+            }
         }
     }
 
     /** Stop advertising. No-op if not running. */
     @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
     fun stop() {
+        watchdog?.let { mainHandler.removeCallbacks(it) }
+        watchdog = null
         val callback = activeCallback ?: return
         activeCallback = null
         val advertiser = context.getSystemService(BluetoothManager::class.java)
@@ -102,7 +134,27 @@ class ConveyanceAdvertiser @Inject constructor(
         }
     }
 
+    /**
+     * Claim the single start outcome for [callback]: true the first time,
+     * false for every later contender (a late framework callback racing
+     * the watchdog, or vice versa). Also cancels the watchdog.
+     */
+    private fun consume(callback: AdvertiseCallback): Boolean {
+        if (activeCallback !== callback || outcomeDelivered) return false
+        outcomeDelivered = true
+        watchdog?.let { mainHandler.removeCallbacks(it) }
+        watchdog = null
+        return true
+    }
+
     companion object {
+        /**
+         * If neither `onStartSuccess` nor `onStartFailure` arrives in
+         * this window, the radio silently cannot advertise (seen on
+         * emulators). 3 s: a real advertiser reports within tens of ms.
+         */
+        const val START_WATCHDOG_MS = 3_000L
+
         /** Pure: an `AdvertiseCallback` error code → our reason. Unit-tested. */
         internal fun mapAdvertiseError(errorCode: Int): BleUnavailable = when (errorCode) {
             AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED -> BleUnavailable.AlreadyActive
