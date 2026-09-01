@@ -75,6 +75,27 @@ pub const HEADER_LEN: usize = 6;
 /// Spec: reassembly buffer per side MUST be capped, default 128 KiB.
 pub const DEFAULT_REASSEMBLY_CAP: usize = 128 * 1024;
 
+/// ATT opcode + attribute handle: the bytes a write or notification PDU
+/// spends before the value. A frame must fit `att_mtu - ATT_PDU_OVERHEAD`.
+pub const ATT_PDU_OVERHEAD: usize = 3;
+
+/// The BLE minimum ATT MTU. A sender that has not seen an MTU exchange
+/// MUST assume this (spec "Framing").
+pub const MIN_ATT_MTU: usize = 23;
+
+/// Largest frame *payload* that keeps a whole frame — this 6-byte header
+/// plus the payload — inside one GATT operation at the given negotiated
+/// ATT MTU. Spec "Framing": `HEADER_LEN + payload <= att_mtu - 3`, i.e.
+/// `max_payload = att_mtu - 3 - HEADER_LEN`.
+///
+/// Both transports feed this straight into [`split_message`] as
+/// `max_payload`. An `att_mtu` below [`MIN_ATT_MTU`] (including a platform
+/// that reports 0 before negotiation) is treated as 23, so the result is
+/// always `>= MIN_ATT_MTU - 3 - HEADER_LEN` (14) and never zero.
+pub fn max_frame_payload(att_mtu: u16) -> usize {
+    (att_mtu as usize).max(MIN_ATT_MTU) - ATT_PDU_OVERHEAD - HEADER_LEN
+}
+
 /// Encode one frame. `payload.len()` must fit in u16.
 pub fn encode_frame(seq: u16, flags: u8, payload: &[u8]) -> Vec<u8> {
     assert!(
@@ -96,9 +117,9 @@ pub fn encode_ack(acked_seq: u16) -> Vec<u8> {
     encode_frame(acked_seq, FLAG_ACK, &[])
 }
 
-/// Split one application message into wire frames sized to
-/// `max_payload` bytes of payload each (caller derives that from the
-/// negotiated MTU minus header and any transport overhead).
+/// Split one application message into wire frames carrying at most
+/// `max_payload` payload bytes each. Callers derive `max_payload` from
+/// the negotiated MTU via [`max_frame_payload`].
 ///
 /// Returns the encoded frames in order plus the next free sequence number
 /// (frames consume seqs; ACKs never do).
@@ -486,6 +507,62 @@ mod tests {
         framer.ingest(&frames[1]).unwrap();
         let done = framer.ingest(&frames[2]).unwrap();
         assert_eq!(done.as_deref(), Some(&b"hello world acked"[..]));
+    }
+
+    #[test]
+    fn max_frame_payload_matches_the_spec_formula() {
+        // att_mtu - 3 - 6, with anything under 23 pinned to 23.
+        assert_eq!(max_frame_payload(0), 14);
+        assert_eq!(max_frame_payload(22), 14);
+        assert_eq!(max_frame_payload(23), 14);
+        assert_eq!(max_frame_payload(185), 176);
+        assert_eq!(max_frame_payload(247), 238);
+        assert_eq!(max_frame_payload(512), 503);
+        assert_eq!(max_frame_payload(517), 508);
+    }
+
+    /// The sizing contract: a frame produced with `max_frame_payload` as
+    /// the split size never exceeds one ATT PDU (`att_mtu - 3`) on the
+    /// wire, at any MTU and any message length, and still round-trips.
+    #[test]
+    fn every_emitted_frame_fits_one_att_pdu() {
+        for att_mtu in [23u16, 24, 27, 100, 185, 247, 512, 517] {
+            let budget = max_frame_payload(att_mtu);
+            let pdu_limit = (att_mtu as usize).max(MIN_ATT_MTU) - ATT_PDU_OVERHEAD;
+            for msg_len in [
+                0usize,
+                1,
+                13,
+                14,
+                15,
+                budget,
+                budget + 1,
+                3 * budget + 7,
+                5000,
+            ] {
+                let msg = vec![0xABu8; msg_len];
+                let (frames, _) = split_message(&msg, budget, 0).unwrap();
+                for f in &frames {
+                    assert!(
+                        (HEADER_LEN..=pdu_limit).contains(&f.len()),
+                        "att_mtu={att_mtu} msg_len={msg_len}: frame len {} outside {HEADER_LEN}..={pdu_limit}",
+                        f.len(),
+                    );
+                }
+                let mut framer = Framer::new();
+                let mut got = None;
+                for f in &frames {
+                    if let Some(m) = framer.ingest(f).unwrap() {
+                        got = Some(m);
+                    }
+                }
+                assert_eq!(
+                    got.as_deref(),
+                    Some(&msg[..]),
+                    "att_mtu={att_mtu} msg_len={msg_len}"
+                );
+            }
+        }
     }
 
     /// Deterministic seeded soak: adversarial mutations of *valid frame

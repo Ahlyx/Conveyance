@@ -42,13 +42,6 @@ fn phone_to_pc_uuid() -> Uuid {
     Uuid::parse_str(PHONE_TO_PC_TX_UUID).expect("pinned constant must parse")
 }
 
-/// Fallback when the platform cannot report a write length: the BLE
-/// minimum MTU (23) minus 3 bytes of ATT overhead.
-const MIN_WRITE_LEN: usize = 20;
-/// Ceiling used when the platform DOES report; keeps phase-4 framing
-/// chunks comfortable without stressing small-MTU peers.
-const KNOWN_GOOD_WRITE_LEN: usize = 512;
-
 pub struct BleTransport {
     manager: Manager,
     /// How long one advertisement sweep sleeps before checking matches.
@@ -194,11 +187,12 @@ impl Transport for BleTransport {
             // that into TransportError::Disconnected.
         });
 
-        // Negotiated MTU minus 3 bytes of ATT overhead, clamped to sane
-        // bounds. This is what phase-4 split_message sizes chunks with.
-        let max_write = (peripheral.mtu() as usize)
-            .saturating_sub(3)
-            .clamp(MIN_WRITE_LEN, KNOWN_GOOD_WRITE_LEN);
+        // Largest frame payload that keeps a whole frame (6-byte header +
+        // payload) inside one ATT write PDU at the negotiated MTU, per the
+        // spec's "Framing" sizing rule. This is what split_message chunks
+        // with. `mtu()` reporting 0 before negotiation folds to the 23
+        // minimum inside the helper.
+        let max_write = crate::wire::framing::max_frame_payload(peripheral.mtu());
 
         Ok(BleLink {
             peripheral,
