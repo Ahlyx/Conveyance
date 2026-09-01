@@ -7,3 +7,7 @@ description = "Conveyance BLE framing: 6-byte length-prefixed sequenced frames w
 
 [dependencies]
 thiserror.workspace = true
+# Only the fixtures module + emitter + drift test use this; kept an
+# unconditional dep (not a feature) so `cargo test` runs the drift gate
+# without extra flags, mirroring conveyance-crypto.
+serde_json.workspace = true

@@ -17,6 +17,7 @@
 //! so existing PC-side call sites are unchanged.
 
 pub mod assembler;
+pub mod fixtures;
 pub mod framing;
 
 pub use assembler::InboundAssembler;
