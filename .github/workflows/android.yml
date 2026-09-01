@@ -4,7 +4,11 @@ name: Android CI
 # from android/**, but the Android build now cross-compiles the
 # conveyance-crypto-ffi Rust crate (phase 10.1 UniFFI bridge), so changes
 # to that crate — and its conveyance-crypto dependency, and the workspace
-# manifests — must trigger this workflow too.
+# manifests — must trigger this workflow too. conveyance-wire (phase 10.3)
+# is here for a different reason: it is not cross-compiled, but it emits
+# framing_fixtures.json, which the Android JVM parity suite replays — a
+# change to the framing rules that is not mirrored into that file must
+# fail here.
 on:
   push:
     branches: [main]
@@ -13,6 +17,7 @@ on:
       - ".github/workflows/android.yml"
       - "crates/conveyance-crypto/**"
       - "crates/conveyance-crypto-ffi/**"
+      - "crates/conveyance-wire/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -22,6 +27,7 @@ on:
       - ".github/workflows/android.yml"
       - "crates/conveyance-crypto/**"
       - "crates/conveyance-crypto-ffi/**"
+      - "crates/conveyance-wire/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -73,6 +79,18 @@ jobs:
             android/app/src/androidTest/assets/crypto_fixtures.json
           git diff --exit-code -- android/app/src/androidTest/assets/crypto_fixtures.json \
             || { echo "::error::crypto_fixtures.json is stale; run the emitter and commit it"; exit 1; }
+
+      # Same gate for the framing layer. framing_fixtures.json is ground
+      # truth for the JVM Rust<->Kotlin framing parity suite; regenerate
+      # from conveyance-wire and fail on any diff, so a framing-rule change
+      # not mirrored into the fixture (and the Kotlin assertion) cannot
+      # land silently. cargo test already runs the same check locally.
+      - name: Regenerate framing fixtures and check for drift
+        run: |
+          cargo run --locked -p conveyance-wire --example emit_framing_fixtures -- \
+            android/app/src/test/resources/framing_fixtures.json
+          git diff --exit-code -- android/app/src/test/resources/framing_fixtures.json \
+            || { echo "::error::framing_fixtures.json is stale; run the emitter and commit it"; exit 1; }
 
       - uses: gradle/actions/setup-gradle@v4
 
