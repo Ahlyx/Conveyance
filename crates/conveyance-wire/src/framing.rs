@@ -21,7 +21,47 @@
 //! dead weight); ACKs exist so phase 7 can correlate delivery when a
 //! consumer actually needs to.
 
-use super::ProtocolError;
+use thiserror::Error;
+
+/// Every way a frame or a reassembly step can be rejected.
+///
+/// `PartialEq` is derived (no opaque payloads here) so fixture-parity
+/// vectors can assert an exact expected variant. Framing errors are
+/// internal: they terminate the session (`protocol_violation`) but only
+/// `MessageTooLarge` has a client-facing spec code.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum FrameError {
+    #[error("frame shorter than the 6-byte header")]
+    FrameTruncated,
+    #[error("frame declares {declared} payload bytes but {actual} follow")]
+    FrameLengthMismatch { declared: usize, actual: usize },
+    #[error("frame has reserved byte set to nonzero")]
+    NonZeroReserved,
+    #[error("illegal flag combination: {bits:#010b}")]
+    IllegalFlags { bits: u8 },
+    #[error("middle frame received while not reassembling a message")]
+    StrayMiddleFrame,
+    #[error("second START frame while a message is mid-reassembly")]
+    NestedMessage,
+    #[error("sequence gap: expected {expected}, got {got}")]
+    SequenceGap { expected: u16, got: u16 },
+    #[error("reassembly buffer limit exceeded ({size} > {cap} bytes)")]
+    MessageTooLarge { size: usize, cap: usize },
+    #[error("split requested with zero-byte per-frame payload")]
+    InvalidSplitSize,
+}
+
+impl FrameError {
+    /// Spec error-model code, where one exists. Only `MessageTooLarge`
+    /// surfaces to the client (`conveyance/message_too_large`); the rest
+    /// are internal protocol violations.
+    pub fn spec_code(&self) -> Option<&'static str> {
+        match self {
+            FrameError::MessageTooLarge { .. } => Some("conveyance/message_too_large"),
+            _ => None,
+        }
+    }
+}
 
 pub const FLAG_START: u8 = 0b001;
 pub const FLAG_END: u8 = 0b010;
@@ -66,9 +106,9 @@ pub fn split_message(
     message: &[u8],
     max_payload: usize,
     start_seq: u16,
-) -> Result<(Vec<Vec<u8>>, u16), ProtocolError> {
+) -> Result<(Vec<Vec<u8>>, u16), FrameError> {
     if max_payload == 0 {
-        return Err(ProtocolError::InvalidSplitSize);
+        return Err(FrameError::InvalidSplitSize);
     }
 
     let count = message.len().div_ceil(max_payload).max(1);
@@ -138,9 +178,9 @@ impl Framer {
 
     /// Feed raw bytes from the wire. Returns `Some(message)` when a full
     /// application message completed (END frame received).
-    pub fn ingest(&mut self, frame_bytes: &[u8]) -> Result<Option<Vec<u8>>, ProtocolError> {
+    pub fn ingest(&mut self, frame_bytes: &[u8]) -> Result<Option<Vec<u8>>, FrameError> {
         if frame_bytes.len() < HEADER_LEN {
-            return Err(ProtocolError::FrameTruncated);
+            return Err(FrameError::FrameTruncated);
         }
         let declared = u16::from_be_bytes([frame_bytes[0], frame_bytes[1]]) as usize;
         let seq = u16::from_be_bytes([frame_bytes[2], frame_bytes[3]]);
@@ -149,13 +189,13 @@ impl Framer {
         let payload = &frame_bytes[HEADER_LEN..];
 
         if reserved != 0 {
-            return Err(ProtocolError::NonZeroReserved);
+            return Err(FrameError::NonZeroReserved);
         }
         if !LEGAL_FLAGS.contains(&flags) {
-            return Err(ProtocolError::IllegalFlags { bits: flags });
+            return Err(FrameError::IllegalFlags { bits: flags });
         }
         if payload.len() != declared {
-            return Err(ProtocolError::FrameLengthMismatch {
+            return Err(FrameError::FrameLengthMismatch {
                 declared,
                 actual: payload.len(),
             });
@@ -164,7 +204,7 @@ impl Framer {
         // ACKs reference history; they neither advance nor check seq.
         if flags == FLAG_ACK {
             if !payload.is_empty() {
-                return Err(ProtocolError::IllegalFlags { bits: flags });
+                return Err(FrameError::IllegalFlags { bits: flags });
             }
             return Ok(None);
         }
@@ -174,11 +214,11 @@ impl Framer {
         // matter what sequence number it claims.
         match flags {
             f if f & FLAG_START != 0 && !matches!(self.progress, Progress::Idle) => {
-                return Err(ProtocolError::NestedMessage);
+                return Err(FrameError::NestedMessage);
             }
             0 => {
                 if matches!(self.progress, Progress::Idle) {
-                    return Err(ProtocolError::StrayMiddleFrame);
+                    return Err(FrameError::StrayMiddleFrame);
                 }
             }
             _ => {}
@@ -186,7 +226,7 @@ impl Framer {
 
         match self.next_seq {
             Some(expected) if seq != expected => {
-                return Err(ProtocolError::SequenceGap { expected, got: seq });
+                return Err(FrameError::SequenceGap { expected, got: seq });
             }
             other => {
                 self.next_seq = Some(match other {
@@ -214,7 +254,7 @@ impl Framer {
                 // A bare END means its START vanished -- gap-class
                 // corruption regardless of payload emptiness.
                 if matches!(self.progress, Progress::Idle) {
-                    return Err(ProtocolError::SequenceGap {
+                    return Err(FrameError::SequenceGap {
                         expected: seq.wrapping_sub(1),
                         got: seq,
                     });
@@ -228,9 +268,9 @@ impl Framer {
         }
     }
 
-    fn check_cap(&self) -> Result<(), ProtocolError> {
+    fn check_cap(&self) -> Result<(), FrameError> {
         if self.buffer.len() > self.cap {
-            return Err(ProtocolError::MessageTooLarge {
+            return Err(FrameError::MessageTooLarge {
                 size: self.buffer.len(),
                 cap: self.cap,
             });
@@ -242,7 +282,6 @@ impl Framer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::message::{Pong, ReqId, WireMessage, encode};
 
     #[test]
     fn small_message_is_one_start_end_frame() {
@@ -324,7 +363,7 @@ mod tests {
             assert!(
                 matches!(
                     framer.ingest(&vec![0xAA; n]),
-                    Err(ProtocolError::FrameTruncated)
+                    Err(FrameError::FrameTruncated)
                 ),
                 "len {n}"
             );
@@ -335,7 +374,7 @@ mod tests {
         bad_len[0] = 0xFF;
         assert!(matches!(
             framer.ingest(&bad_len),
-            Err(ProtocolError::FrameLengthMismatch {
+            Err(FrameError::FrameLengthMismatch {
                 declared: 65283,
                 actual: 3
             })
@@ -346,14 +385,14 @@ mod tests {
         bad_res[5] = 1;
         assert!(matches!(
             framer.ingest(&bad_res),
-            Err(ProtocolError::NonZeroReserved)
+            Err(FrameError::NonZeroReserved)
         ));
 
         // Undefined flag bits / illegal combos.
         for flags in [0b1000, 0b1001, 0b1010, 0b1100, 0b111, 0b110] {
             let bad = encode_frame(0, flags, b"");
             assert!(
-                matches!(framer.ingest(&bad), Err(ProtocolError::IllegalFlags { .. })),
+                matches!(framer.ingest(&bad), Err(FrameError::IllegalFlags { .. })),
                 "flags {flags:#b}"
             );
         }
@@ -372,7 +411,7 @@ mod tests {
         framer.ingest(&frames[0]).unwrap();
         assert!(matches!(
             framer.ingest(&frames[2]),
-            Err(ProtocolError::SequenceGap {
+            Err(FrameError::SequenceGap {
                 expected: 11,
                 got: 12
             })
@@ -382,7 +421,7 @@ mod tests {
         let mut fresh = Framer::new();
         assert!(matches!(
             fresh.ingest(&frames[1]),
-            Err(ProtocolError::StrayMiddleFrame)
+            Err(FrameError::StrayMiddleFrame)
         ));
 
         // Reordering across independent single-frame messages: A at seq
@@ -393,7 +432,7 @@ mod tests {
         assert_eq!(framer.ingest(&a[0]).unwrap().as_deref(), Some(&b"AAA"[..]));
         assert!(matches!(
             framer.ingest(&b[0]),
-            Err(ProtocolError::SequenceGap {
+            Err(FrameError::SequenceGap {
                 expected: 6,
                 got: 7
             })
@@ -409,7 +448,7 @@ mod tests {
         framer.ingest(&a[0]).unwrap(); // START
         assert!(matches!(
             framer.ingest(&b[0]),
-            Err(ProtocolError::NestedMessage)
+            Err(FrameError::NestedMessage)
         ));
     }
 
@@ -423,7 +462,7 @@ mod tests {
         framer.ingest(&frames[0]).unwrap(); // 50 bytes, under cap
         let err = framer.ingest(&frames[1]).unwrap_err();
         match err {
-            ProtocolError::MessageTooLarge { size, cap } => {
+            FrameError::MessageTooLarge { size, cap } => {
                 assert_eq!(cap, 64);
                 assert!(size > 64);
                 assert_eq!(err.spec_code(), Some("conveyance/message_too_large"));
@@ -449,10 +488,12 @@ mod tests {
         assert_eq!(done.as_deref(), Some(&b"hello world acked"[..]));
     }
 
-    /// Deterministic seeded soak: adversarial mutations of valid traffic
-    /// through both parser surfaces. Panics fail the test; typed errors
-    /// pass. Complements the coverage-guided fuzz targets (fuzz/) that
-    /// run on Linux CI.
+    /// Deterministic seeded soak: adversarial mutations of *valid frame
+    /// traffic* through the parser. Panics fail the test; typed errors
+    /// pass. Complements the coverage-guided fuzz target
+    /// (`fuzz/fuzz_targets/frame_ingest.rs`) on Linux CI, and the
+    /// cross-layer soak in `conveyance-core::wire` that also feeds the
+    /// mutated bytes to the CBOR message decoder.
     #[test]
     fn mutation_soak_over_valid_traffic_produces_errors_not_panics() {
         struct Lcg(u64);
@@ -467,19 +508,22 @@ mod tests {
         }
         let mut rng = Lcg(0xC0FFEE);
 
-        let base_messages: Vec<Vec<u8>> = (0..8)
+        // Valid multi-frame streams to mutate: a message split at a small
+        // MTU so START/middle/END all appear, plus single START|END and
+        // ACK shapes.
+        let base_streams: Vec<Vec<u8>> = (0..8)
             .map(|n| {
-                encode(&WireMessage::Pong(Pong {
-                    req_id: ReqId([(n * 17) as u8; 16]),
-                    timestamp: n as i64,
-                }))
-                .unwrap()
+                let body = vec![(n * 31) as u8; (n as usize + 1) * 13];
+                let (frames, _) = split_message(&body, 7, (n as u16) * 5).unwrap();
+                let mut stream: Vec<u8> = frames.concat();
+                stream.extend_from_slice(&encode_ack((n as u16) * 5));
+                stream
             })
             .collect();
 
         // Soak 1: mutate whole-frame byte streams.
         for iteration in 0..50_000u32 {
-            let src = &base_messages[(rng.next() % base_messages.len() as u64) as usize];
+            let src = &base_streams[(rng.next() % base_streams.len() as u64) as usize];
             let mut bytes = src.clone();
             let flips = 1 + (rng.next() % 8) as usize;
             for _ in 0..flips {
@@ -494,7 +538,6 @@ mod tests {
 
             let mut framer = Framer::new();
             let _ = framer.ingest(&bytes); // must not panic
-            let _ = super::super::message::decode(&bytes); // must not panic
 
             // Occasionally drive the framer with the mutated bytes SPLIT
             // into arbitrary frame-ish pieces to stress multi-ingest.

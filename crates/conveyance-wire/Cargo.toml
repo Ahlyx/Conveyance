@@ -1,0 +1,9 @@
+[package]
+name = "conveyance-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Conveyance BLE framing: 6-byte length-prefixed sequenced frames with START/END/ACK flags and a 128 KiB reassembly cap. Pure-Rust, no I/O — extracted from conveyance-core (phase 10.3) so the Android framing port can drift-gate against one source of truth."
+
+[dependencies]
+thiserror.workspace = true

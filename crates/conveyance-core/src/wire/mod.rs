@@ -15,8 +15,13 @@
 //! * [`binding`] — consume-on-use tracking of approved req_ids.
 
 pub mod binding;
-pub mod framing;
 pub mod message;
+
+/// BLE framing. Extracted to the standalone `conveyance-wire` crate
+/// (phase 10.3) so the Android port drift-gates against one source of
+/// truth; re-exported here so `conveyance_core::wire::framing::*` paths
+/// are unchanged.
+pub use conveyance_wire::framing;
 
 use thiserror::Error;
 
@@ -33,25 +38,12 @@ pub enum ProtocolError {
     #[error("value in '{field}' is outside the canonical-JSON domain (no floats or binary values)")]
     UnsupportedValueType { field: &'static str },
 
-    // ---- framing ----------------------------------------------------
-    #[error("frame shorter than the 6-byte header")]
-    FrameTruncated,
-    #[error("frame declares {declared} payload bytes but {actual} follow")]
-    FrameLengthMismatch { declared: usize, actual: usize },
-    #[error("frame has reserved byte set to nonzero")]
-    NonZeroReserved,
-    #[error("illegal flag combination: {bits:#010b}")]
-    IllegalFlags { bits: u8 },
-    #[error("middle frame received while not reassembling a message")]
-    StrayMiddleFrame,
-    #[error("second START frame while a message is mid-reassembly")]
-    NestedMessage,
-    #[error("sequence gap: expected {expected}, got {got}")]
-    SequenceGap { expected: u16, got: u16 },
-    #[error("reassembly buffer limit exceeded ({size} > {cap} bytes)")]
-    MessageTooLarge { size: usize, cap: usize },
-    #[error("split requested with zero-byte per-frame payload")]
-    InvalidSplitSize,
+    // ---- framing --------------------------------------------------------
+    /// A frame or reassembly-step rejection from `conveyance-wire`. Kept
+    /// as a nested variant (rather than flattened) so the framing crate
+    /// owns its own taxonomy and the Android port has one enum to mirror.
+    #[error(transparent)]
+    Frame(#[from] conveyance_wire::FrameError),
 
     // ---- signatures & binding ---------------------------------------
     #[error("signature verification failed")]
@@ -98,9 +90,63 @@ impl ProtocolError {
     /// client-facing code in v1.
     pub fn spec_code(&self) -> Option<&'static str> {
         match self {
-            ProtocolError::MessageTooLarge { .. } => Some("conveyance/message_too_large"),
+            ProtocolError::Frame(e) => e.spec_code(),
             ProtocolError::ApprovalMismatch { .. } => Some("conveyance/approval_mismatch"),
             _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::framing::Framer;
+    use super::message::{Pong, ReqId, WireMessage, decode, encode};
+
+    /// Cross-layer soak: mutated valid CBOR-message bytes fed through
+    /// BOTH the framer and the message decoder. Neither may panic; typed
+    /// errors pass. The pure-framing soak lives in `conveyance-wire`;
+    /// this one is what would catch a panic that only shows up when the
+    /// two parsers see the same adversarial bytes. Seeded, deterministic.
+    #[test]
+    fn mutation_soak_across_framing_and_message_decode() {
+        struct Lcg(u64);
+        impl Lcg {
+            fn next(&mut self) -> u64 {
+                self.0 = self
+                    .0
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                self.0 >> 16
+            }
+        }
+        let mut rng = Lcg(0xC0FFEE);
+
+        let base_messages: Vec<Vec<u8>> = (0..8)
+            .map(|n| {
+                encode(&WireMessage::Pong(Pong {
+                    req_id: ReqId([(n * 17) as u8; 16]),
+                    timestamp: n as i64,
+                }))
+                .unwrap()
+            })
+            .collect();
+
+        for _ in 0..50_000u32 {
+            let src = &base_messages[(rng.next() % base_messages.len() as u64) as usize];
+            let mut bytes = src.clone();
+            let flips = 1 + (rng.next() % 8) as usize;
+            for _ in 0..flips {
+                let idx = (rng.next() as usize) % bytes.len().max(1);
+                if idx < bytes.len() {
+                    bytes[idx] ^= (rng.next() & 0xFF) as u8;
+                }
+            }
+            if rng.next() & 1 == 1 && !bytes.is_empty() {
+                bytes.truncate((rng.next() as usize) % bytes.len());
+            }
+
+            let _ = Framer::new().ingest(&bytes); // must not panic
+            let _ = decode(&bytes); // must not panic
         }
     }
 }

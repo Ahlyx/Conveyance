@@ -11,6 +11,10 @@ description = "Shared foundations for Conveyance: crypto, storage, sessions, wir
 # `conveyance_core::crypto`, so call sites in this crate and the
 # daemon/shim/CLI are unchanged.
 conveyance-crypto = { path = "../conveyance-crypto" }
+# BLE framing. Extracted (phase 10.3) so the Android Kotlin port has one
+# source of truth to drift-gate against; re-exported below as
+# `conveyance_core::wire::framing`, so PC-side call sites are unchanged.
+conveyance-wire = { path = "../conveyance-wire" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true

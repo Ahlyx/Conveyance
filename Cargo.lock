@@ -809,6 +809,7 @@ dependencies = [
  "btleplug",
  "ciborium",
  "conveyance-crypto",
+ "conveyance-wire",
  "dirs",
  "futures-lite",
  "keyring",
@@ -878,6 +879,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "conveyance-wire"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
 ]
 
 [[package]]

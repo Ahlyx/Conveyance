@@ -56,6 +56,12 @@ impl From<crate::wire::ProtocolError> for TransportError {
     }
 }
 
+impl From<crate::wire::framing::FrameError> for TransportError {
+    fn from(e: crate::wire::framing::FrameError) -> Self {
+        TransportError::Ble(e.to_string())
+    }
+}
+
 impl TransportError {
     /// Upstream mapping: a disconnected link ends the session as
     /// `EndReason::PeerDisconnected` (phase 3 contract).
@@ -126,16 +132,16 @@ impl InboundAssembler {
     /// completed, in order. Errors are the framing layer's own; a hostile
     /// length prefix trips `MessageTooLarge` before we buffer toward it.
     pub fn ingest(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, crate::wire::ProtocolError> {
-        use crate::wire::ProtocolError;
-        use crate::wire::framing::{self, HEADER_LEN};
+        use crate::wire::framing::{self, FrameError, HEADER_LEN};
 
         const CAP: usize = framing::DEFAULT_REASSEMBLY_CAP;
         self.buffer.extend_from_slice(bytes);
         if self.buffer.len() > CAP {
-            return Err(ProtocolError::MessageTooLarge {
+            return Err(FrameError::MessageTooLarge {
                 size: self.buffer.len(),
                 cap: CAP,
-            });
+            }
+            .into());
         }
 
         let mut messages = Vec::new();
@@ -148,10 +154,11 @@ impl InboundAssembler {
             // Validate the length prefix against the cap BEFORE draining:
             // never allocate toward an attacker-chosen size.
             if declared > CAP {
-                return Err(ProtocolError::MessageTooLarge {
+                return Err(FrameError::MessageTooLarge {
                     size: declared,
                     cap: CAP,
-                });
+                }
+                .into());
             }
             let total = HEADER_LEN + declared;
             if self.buffer.len() < total {

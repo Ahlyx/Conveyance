@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/conveyance-crypto",
     "crates/conveyance-crypto-ffi",
+    "crates/conveyance-wire",
     "crates/conveyance-core",
     "crates/conveyance-daemon",
     "crates/conveyance-shim",
