@@ -221,9 +221,12 @@ impl Link for BleLink {
     }
 
     async fn send(&mut self, chunk: &[u8]) -> Result<(), TransportError> {
-        if chunk.len() > self.max_write {
+        // `chunk` is a whole frame: `max_write` payload bytes + the
+        // 6-byte header. A frame that still fits one ATT PDU is legal;
+        // anything larger is a caller that ignored `max_write_len`.
+        if chunk.len() > self.max_write + crate::wire::framing::HEADER_LEN {
             return Err(TransportError::InvalidState(
-                "chunk exceeds negotiated max_write_len",
+                "frame exceeds one ATT PDU at the negotiated MTU",
             ));
         }
         // Spec: pc_to_phone_tx is write-without-response. A few platforms

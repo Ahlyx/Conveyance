@@ -89,11 +89,12 @@ impl Link for MockLink {
         if self.closed {
             return Err(TransportError::InvalidState("link shut down"));
         }
-        if chunk.len() > self.max_write {
-            // Contract enforcement: callers derive sizes from
-            // max_write_len(); exceeding it is a caller bug we refuse
-            // rather than silently splitting (splitting is framing's or
-            // this link's explicit job, not an accident).
+        if chunk.len() > self.max_write + crate::wire::framing::HEADER_LEN {
+            // Contract enforcement: callers pass max_write_len() to
+            // split_message as the PAYLOAD budget, so a well-formed frame
+            // is that plus the 6-byte header. A larger chunk is a caller
+            // bug we refuse rather than silently splitting (splitting is
+            // framing's explicit job, not an accident).
             return Err(TransportError::InvalidState("chunk exceeds max_write_len"));
         }
         let tx = self
@@ -139,6 +140,20 @@ mod tests {
     async fn shared_suite_echo_through_full_stack() {
         test_suite::echo_through_full_stack(|| async {
             let (mut a, mut b) = MockTransport::pair();
+            Ok((
+                a.connect(Duration::ZERO).await?,
+                b.connect(Duration::ZERO).await?,
+            ))
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn shared_suite_multi_frame_send_respects_max_write_len() {
+        test_suite::multi_frame_send_respects_max_write_len(|| async {
+            // A small budget so the message is many frames.
+            let (mut a, mut b) = MockTransport::pair_with(256, 20);
             Ok((
                 a.connect(Duration::ZERO).await?,
                 b.connect(Duration::ZERO).await?,

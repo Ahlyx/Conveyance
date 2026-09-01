@@ -208,4 +208,40 @@ pub(crate) mod test_suite {
         }
         Ok(())
     }
+
+    /// The `send_over_session` sizing contract: split a multi-frame
+    /// message using `link.max_write_len()` verbatim as the payload
+    /// budget, then `send` every frame. Each frame is `budget + header`,
+    /// so this fails if `send`'s guard compares a frame against the bare
+    /// payload budget (the pre-10.3 conflation).
+    pub(crate) async fn multi_frame_send_respects_max_write_len<L, F, Fut>(
+        make_pair: F,
+    ) -> Result<(), TransportError>
+    where
+        L: Link,
+        F: Fn() -> Fut,
+        Fut: Future<Output = Result<Pair<L>, TransportError>>,
+    {
+        let (mut a, mut b) = make_pair().await?;
+        let budget = usize::min(a.max_write_len(), b.max_write_len());
+        assert!(budget >= crate::wire::framing::HEADER_LEN);
+
+        let message: Vec<u8> = (0..budget * 5 + 3).map(|i| (i % 251) as u8).collect();
+        let (frames, _) = split_message(&message, budget, 0)?;
+        assert!(frames.len() > 5, "expected a genuinely multi-frame split");
+        for frame in &frames {
+            assert!(frame.len() <= budget + crate::wire::framing::HEADER_LEN);
+            a.send(frame).await?;
+        }
+
+        let mut assembler = InboundAssembler::new();
+        let mut got: Option<Vec<u8>> = None;
+        while got.is_none() {
+            for m in assembler.ingest(&b.recv().await?)? {
+                got = Some(m);
+            }
+        }
+        assert_eq!(got.unwrap(), message);
+        Ok(())
+    }
 }
