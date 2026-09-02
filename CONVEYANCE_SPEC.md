@@ -363,6 +363,9 @@ be user-bypassable through configuration.
    - Each side uses its own long-term X25519 static key and the peer's
      long-term X25519 static key learned during pairing.
    - Ephemeral keypairs generated fresh per session.
+   - Handshake message payloads are empty. No prologue and no PSK are
+     used. Both implementations MUST match this exactly so the handshake
+     bytes are identical on each side.
 6. On successful handshake, both sides transition to ACTIVE.
 7. Idle and hard-cap timers start.
 
@@ -372,11 +375,18 @@ Session start MUST fail closed if:
   `conveyance/phone_not_paired`).
 - Phone is not reachable via BLE within a 30-second timeout
   (`PhoneUnreachable`, wire code `conveyance/phone_unreachable`).
-- The Noise handshake fails for any reason (`HandshakeFailed`, generic —
-  MUST NOT leak which validation failed).
-- The peer static key does not match the paired-and-stored value
-  (`PeerIdentityMismatch` — this is either an attack or a re-paired
-  phone that hasn't re-paired with this PC).
+- The Noise handshake fails for any reason — including a peer static key
+  that does not match the paired-and-stored value (`HandshakeFailed`,
+  generic — MUST NOT leak which validation failed).
+
+A mismatched peer static key is either an attack or a phone that
+re-paired against a different PC. Under Noise_KK it is **not separable**
+from any other handshake failure: each side supplies the expected peer
+static into the handshake, so a wrong value fails the same MAC check as
+corrupt bytes or a wrong message order. v1 therefore has no distinct
+`PeerIdentityMismatch` / `conveyance/peer_identity_mismatch` code; the
+condition surfaces as generic `HandshakeFailed`, which is also the
+correct no-leak outcome.
 
 ### Cold-start behavior
 
@@ -1026,8 +1036,7 @@ Named error codes:
 | `conveyance/approval_denied` | User denied the request | No |
 | `conveyance/approval_timeout` | User did not respond within 60 s | Yes |
 | `conveyance/session_ended` | Session ended mid-request | Yes, after re-start |
-| `conveyance/handshake_failed` | Noise handshake failed | No (fatal for pairing) |
-| `conveyance/peer_identity_mismatch` | Phone key does not match paired identity | No |
+| `conveyance/handshake_failed` | Noise handshake failed (any cause, including a peer static key that does not match the paired identity — see "Session start") | No (fatal for pairing) |
 | `conveyance/approval_mismatch` | Execute payload differs from approved payload | No — this is an attack signal |
 | `conveyance/service_unknown` | No credentials for the requested service | No |
 | `conveyance/message_too_large` | Reassembly buffer exceeded | No |
@@ -1042,9 +1051,8 @@ Named error codes:
 
 `conveyance/signature_verification_failed` is the code for a response
 that arrived over an authenticated session but whose portable Ed25519
-signature does not verify. Like `handshake_failed` and
-`peer_identity_mismatch`, its message MUST stay generic — it names the
-category, never which field or check failed.
+signature does not verify. Like `handshake_failed`, its message MUST stay
+generic — it names the category, never which field or check failed.
 
 `conveyance/internal` is the deliberate catch-all for failures that do
 not map to any code above (transient encode failures, a full request
@@ -1054,8 +1062,9 @@ Use it sparingly: log the specific cause locally, never leak it in the
 assuming either value.
 
 The error message MUST NOT leak information about which validation failed
-for security-relevant errors (handshake, peer identity, signature
-verification). Users learn the category, not the specifics.
+for security-relevant errors (handshake — which subsumes peer-static
+mismatch — and signature verification). Users learn the category, not
+the specifics.
 
 ---
 
@@ -1089,8 +1098,9 @@ Before v1 is considered releasable, the following MUST be covered.
 - Pairing with expired QR: fails cleanly.
 - Pairing with tampered PairingConfirm: fails, nothing persisted.
 - Session start after pairing: reaches ACTIVE.
-- Session start with a phone whose identity does not match:
-  `peer_identity_mismatch`.
+- Session start with a phone whose static key does not match the paired
+  value: `handshake_failed` (generic — Noise_KK cannot distinguish this
+  from any other handshake failure).
 - Full request flow: approve → execute → response, both logs contain
   matching rows, signatures verify.
 - Denial flow: user denies, PC receives `approval_denied`, no execution.
