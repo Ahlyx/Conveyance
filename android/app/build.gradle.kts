@@ -36,75 +36,105 @@ val ffiCrate = "conveyance-crypto-ffi"
 // real-device target, x86_64 is what CI's emulator runs. No 32-bit.
 val androidAbis = listOf("arm64-v8a", "x86_64")
 
-val jniLibsDir: File = file("src/main/jniLibs")
-val uniffiBindingsDir: Provider<Directory> = layout.buildDirectory.dir("generated/uniffi")
+// --- Variant-split Rust build (phase 10.4) ---------------------------------
+// The DEBUG variant enables `conveyance-crypto-ffi/test-vectors`, which
+// exports `noiseInitiateWithFixedEphemeral` for the Noise handshake parity
+// suite (fixed ephemeral -> deterministic handshake bytes to pin against
+// the Rust reference). It builds the DEV profile because conveyance-noise
+// has a compile guard that refuses `test-vectors` with `debug_assertions`
+// off. The RELEASE variant is the optimized .so with no test-only surface.
+//
+// Each variant feeds its own jniLibs dir and its own UniFFI bindings dir,
+// so the generated Kotlin always matches the .so it loads against
+// (UniFFI's runtime contract checksum would otherwise fault). CI only
+// builds the debug variant.
+val uniffiConfig: File = rustWorkspaceRoot.resolve("crates/$ffiCrate/uniffi.toml")
 
-val hostFfiLib: File = run {
+fun hostFfiLib(profileDir: String): File {
     val os = System.getProperty("os.name").lowercase()
     val (prefix, ext) = when {
         os.contains("win") -> "" to "dll"
         os.contains("mac") -> "lib" to "dylib"
         else -> "lib" to "so"
     }
-    rustWorkspaceRoot.resolve("target/debug/${prefix}conveyance_crypto_ffi.$ext")
+    return rustWorkspaceRoot.resolve("target/$profileDir/${prefix}conveyance_crypto_ffi.$ext")
 }
 
-val cargoNdkBuild by tasks.registering(Exec::class) {
-    group = "rust"
-    description = "Cross-compiles $ffiCrate to a .so for ${androidAbis.joinToString()}."
-    workingDir = rustWorkspaceRoot
-    commandLine(
-        buildList {
-            add("cargo"); add("ndk")
-            androidAbis.forEach { add("-t"); add(it) }
-            add("-o"); add(jniLibsDir.absolutePath)
-            add("build"); add("--release"); add("-p"); add(ffiCrate)
-        },
-    )
+data class RustVariant(val name: String, val release: Boolean, val features: List<String>) {
+    val jniLibs: File get() = file("src/$name/jniLibs")
+    val bindings: Provider<Directory> get() = layout.buildDirectory.dir("generated/uniffi/$name")
+    val hostProfile: String get() = if (release) "release" else "debug"
+}
+
+val rustVariants = listOf(
+    RustVariant("debug", release = false, features = listOf("$ffiCrate/test-vectors")),
+    RustVariant("release", release = true, features = emptyList()),
+)
+
+val commonRustInputs: Action<Exec> = Action {
     inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-crypto-ffi/src"))
     inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-crypto/src"))
+    inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-noise/src"))
     inputs.file(rustWorkspaceRoot.resolve("Cargo.lock"))
-    outputs.dir(jniLibsDir)
 }
 
-val cargoBuildHostFfi by tasks.registering(Exec::class) {
-    group = "rust"
-    description = "Builds $ffiCrate for the host so uniffi-bindgen can read its metadata."
-    workingDir = rustWorkspaceRoot
-    commandLine("cargo", "build", "-p", ffiCrate)
-    inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-crypto-ffi/src"))
-    inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-crypto/src"))
-    inputs.file(rustWorkspaceRoot.resolve("Cargo.lock"))
-    outputs.file(hostFfiLib)
-}
+rustVariants.forEach { v ->
+    val featureArgs = v.features.flatMap { listOf("--features", it) }
 
-val uniffiConfig: File = rustWorkspaceRoot.resolve("crates/$ffiCrate/uniffi.toml")
+    val ndk = tasks.register<Exec>("cargoNdkBuild${v.name.replaceFirstChar { it.uppercase() }}") {
+        group = "rust"
+        description = "Cross-compiles $ffiCrate (${v.name}) to a .so for ${androidAbis.joinToString()}."
+        workingDir = rustWorkspaceRoot
+        commandLine(
+            buildList {
+                add("cargo"); add("ndk")
+                androidAbis.forEach { add("-t"); add(it) }
+                add("-o"); add(v.jniLibs.absolutePath)
+                add("build"); if (v.release) add("--release")
+                add("-p"); add(ffiCrate)
+                addAll(featureArgs)
+            },
+        )
+        commonRustInputs.execute(this)
+        outputs.dir(v.jniLibs)
+    }
 
-val generateUniffiBindings by tasks.registering(Exec::class) {
-    group = "rust"
-    description = "Generates Kotlin bindings for $ffiCrate from the host build."
-    dependsOn(cargoBuildHostFfi)
-    workingDir = rustWorkspaceRoot
-    // uniffi-bindgen auto-discovers crates/<ffiCrate>/uniffi.toml from the
-    // library's metadata. That file sets `android = true` so the generated
-    // object cleaner uses the JNA path on <API 34 and guards the
-    // java.lang.ref.Cleaner path with @RequiresApi — lintDebug then passes
-    // at minSdk 30 even though UnlockedIdentity is a UniFFI object.
-    commandLine(
-        "cargo", "run", "-p", ffiCrate, "--bin", "uniffi-bindgen", "--",
-        "generate",
-        "--library", hostFfiLib.absolutePath,
-        "--language", "kotlin",
-        "--no-format",
-        "--out-dir", uniffiBindingsDir.get().asFile.absolutePath,
-    )
-    inputs.file(hostFfiLib)
-    inputs.file(uniffiConfig)
-    outputs.dir(uniffiBindingsDir)
-}
+    val hostBuild = tasks.register<Exec>("cargoBuildHostFfi${v.name.replaceFirstChar { it.uppercase() }}") {
+        group = "rust"
+        description = "Builds $ffiCrate (${v.name}) for the host so uniffi-bindgen can read its metadata."
+        workingDir = rustWorkspaceRoot
+        commandLine(buildList { add("cargo"); add("build"); if (v.release) add("--release"); add("-p"); add(ffiCrate); addAll(featureArgs) })
+        commonRustInputs.execute(this)
+        outputs.file(hostFfiLib(v.hostProfile))
+    }
 
-tasks.matching { it.name == "preBuild" }.configureEach {
-    dependsOn(cargoNdkBuild, generateUniffiBindings)
+    tasks.register<Exec>("generateUniffiBindings${v.name.replaceFirstChar { it.uppercase() }}") {
+        group = "rust"
+        description = "Generates Kotlin bindings for $ffiCrate (${v.name})."
+        dependsOn(hostBuild)
+        workingDir = rustWorkspaceRoot
+        // uniffi-bindgen auto-discovers crates/<ffiCrate>/uniffi.toml from the
+        // library's metadata. That file sets `android = true` so the generated
+        // object cleaner uses the JNA path on <API 34 and guards the
+        // java.lang.ref.Cleaner path with @RequiresApi — lintDebug then passes
+        // at minSdk 30.
+        commandLine(
+            "cargo", "run", *(if (v.release) arrayOf("--release") else emptyArray()),
+            "-p", ffiCrate, *featureArgs.toTypedArray(), "--bin", "uniffi-bindgen", "--",
+            "generate",
+            "--library", hostFfiLib(v.hostProfile).absolutePath,
+            "--language", "kotlin",
+            "--no-format",
+            "--out-dir", v.bindings.get().asFile.absolutePath,
+        )
+        inputs.file(hostFfiLib(v.hostProfile))
+        inputs.file(uniffiConfig)
+        outputs.dir(v.bindings)
+    }
+
+    tasks.matching { it.name == "pre${v.name.replaceFirstChar { it.uppercase() }}Build" }.configureEach {
+        dependsOn(ndk, "generateUniffiBindings${v.name.replaceFirstChar { it.uppercase() }}")
+    }
 }
 
 android {
@@ -153,9 +183,13 @@ android {
         buildConfig = true
     }
 
-    // The UniFFI-generated Kotlin lands here (see the Rust block at the
-    // top of this file); treat it as a source root.
-    sourceSets["main"].kotlin.srcDir(uniffiBindingsDir)
+    // Per-variant UniFFI bindings + jniLibs (see the Rust block at the top
+    // of this file). Debug's bindings carry the `test-vectors` surface;
+    // release's do not. jniLibs are picked up from src/<variant>/jniLibs
+    // automatically.
+    rustVariants.forEach { v ->
+        sourceSets[v.name].kotlin.srcDir(v.bindings)
+    }
 
     packaging {
         resources {

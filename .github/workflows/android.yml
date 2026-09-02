@@ -1,14 +1,13 @@
 name: Android CI
 
 # Scoped to the Android track. The Rust workflow (ci.yml) is scoped away
-# from android/**, but the Android build now cross-compiles the
-# conveyance-crypto-ffi Rust crate (phase 10.1 UniFFI bridge), so changes
-# to that crate — and its conveyance-crypto dependency, and the workspace
-# manifests — must trigger this workflow too. conveyance-wire (phase 10.3)
-# is here for a different reason: it is not cross-compiled, but it emits
-# framing_fixtures.json, which the Android JVM parity suite replays — a
-# change to the framing rules that is not mirrored into that file must
-# fail here.
+# from android/**, but the Android build cross-compiles conveyance-crypto-ffi
+# (phase 10.1 UniFFI bridge) and — through it — conveyance-noise (phase
+# 10.4 Noise KK session), so changes to those crates, their
+# conveyance-crypto dependency, and the workspace manifests must trigger
+# this workflow. conveyance-wire (phase 10.3) and conveyance-noise are
+# also here because they emit *_fixtures.json that the Android parity
+# suites replay — a rule change not mirrored into a fixture must fail here.
 on:
   push:
     branches: [main]
@@ -18,6 +17,7 @@ on:
       - "crates/conveyance-crypto/**"
       - "crates/conveyance-crypto-ffi/**"
       - "crates/conveyance-wire/**"
+      - "crates/conveyance-noise/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -28,6 +28,7 @@ on:
       - "crates/conveyance-crypto/**"
       - "crates/conveyance-crypto-ffi/**"
       - "crates/conveyance-wire/**"
+      - "crates/conveyance-noise/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -91,6 +92,18 @@ jobs:
             android/app/src/test/resources/framing_fixtures.json
           git diff --exit-code -- android/app/src/test/resources/framing_fixtures.json \
             || { echo "::error::framing_fixtures.json is stale; run the emitter and commit it"; exit 1; }
+
+      # Same gate for the Noise KK handshake. noise_fixtures.json is
+      # ground truth for the instrumented Rust<->Kotlin parity suite;
+      # regenerate from conveyance-noise (needs --features test-vectors
+      # for the fixed-ephemeral emitter) and fail on any diff.
+      - name: Regenerate Noise fixtures and check for drift
+        run: |
+          cargo run --locked -p conveyance-noise --features test-vectors \
+            --example emit_noise_fixtures -- \
+            android/app/src/androidTest/assets/noise_fixtures.json
+          git diff --exit-code -- android/app/src/androidTest/assets/noise_fixtures.json \
+            || { echo "::error::noise_fixtures.json is stale; run the emitter and commit it"; exit 1; }
 
       - uses: gradle/actions/setup-gradle@v4
 

@@ -25,8 +25,11 @@ ENGINEERING-GUARDRAILS.md
 /android/.kotlin/
 /android/app/release/
 # Rust .so files cross-compiled by cargo-ndk (phase 10.1 UniFFI bridge);
-# rebuilt from crates/conveyance-crypto-ffi on every Android build.
+# rebuilt from crates/conveyance-crypto-ffi on every Android build. Split
+# per variant in phase 10.4 (debug carries `test-vectors`, release does not).
 /android/app/src/main/jniLibs/
+/android/app/src/debug/jniLibs/
+/android/app/src/release/jniLibs/
 .idea/
 *.iml
 # Signing material never belongs in git.
