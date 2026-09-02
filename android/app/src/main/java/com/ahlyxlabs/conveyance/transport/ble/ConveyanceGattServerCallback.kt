@@ -25,17 +25,36 @@ class ConveyanceGattServerCallback(
     private val deviceSink: (BluetoothDevice?) -> Unit = {},
 ) : BluetoothGattServerCallback() {
 
+    // Tracks the device a genuine STATE_CONNECTED landed for, so a
+    // disconnect callback can be checked against it below. hasConnected
+    // is tracked separately from connectedDevice being non-null: the
+    // framework's device is @Volatile-visible but nothing stops it being
+    // null on a real callback in principle, and a null-vs-null comparison
+    // must not be mistaken for "matches the device we connected".
+    @Volatile private var hasConnected = false
+    @Volatile private var connectedDevice: BluetoothDevice? = null
+
     override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
         val connected =
             newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS
-        deviceSink(if (connected) device else null)
-        actor.onEvent(
-            if (connected) {
-                ConnectionStateMachine.Event.CentralConnected
-            } else {
-                ConnectionStateMachine.Event.CentralDisconnected
-            },
-        )
+        if (connected) {
+            hasConnected = true
+            connectedDevice = device
+            deviceSink(device)
+            actor.onEvent(ConnectionStateMachine.Event.CentralConnected)
+        } else {
+            // A stale/duplicate disconnect callback for a device we never
+            // tracked as connected (finding #5) — a documented BLE-stack
+            // quirk — must not tear down a session that has nothing to
+            // tear down yet. AdapterOff has no analogous risk (it comes
+            // from one real ACTION_STATE_CHANGED broadcast, not a binder
+            // callback) and keeps tearing down unconditionally.
+            if (!hasConnected || device != connectedDevice) return
+            hasConnected = false
+            connectedDevice = null
+            deviceSink(null)
+            actor.onEvent(ConnectionStateMachine.Event.CentralDisconnected)
+        }
     }
 
     override fun onMtuChanged(device: BluetoothDevice?, mtu: Int) {

@@ -77,6 +77,26 @@ class ConveyanceGattServerCallbackTest {
     }
 
     @Test
+    fun spuriousDisconnectBeforeAnyConnectIsIgnored() = runTest(dispatcher) {
+        // Finding #5: a stale/duplicate STATE_DISCONNECTED binder callback
+        // arriving before any real connection landed must not tear the
+        // session down. (The "different device" mismatch branch isn't
+        // testable at the unit level — BluetoothDevice has no accessible
+        // constructor outside the framework; this is the failure scenario
+        // the finding actually describes.)
+        val a = actor()
+        var deviceSinkCalls = 0
+        val cb = ConveyanceGattServerCallback(a, fake, deviceSink = { deviceSinkCalls++ })
+
+        cb.onConnectionStateChange(null, BluetoothGatt.GATT_SUCCESS, BluetoothProfile.STATE_DISCONNECTED)
+        runCurrent()
+
+        assertEquals(0, deviceSinkCalls)
+        assertEquals(State.IDLE, a.state.value)
+        assertEquals(0, fake.closeCount)
+    }
+
+    @Test
     fun notificationSentForwardsTheDeliveryResult() = runTest(dispatcher) {
         val a = actor()
         val cb = ConveyanceGattServerCallback(a, fake)
