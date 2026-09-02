@@ -1,0 +1,52 @@
+{
+  "_comment": "Emitted by `cargo run -p conveyance-noise --features test-vectors --example emit_noise_fixtures`. Do not hand-edit. CI regenerates and fails on any diff.",
+  "handshake": {
+    "msg1_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b147e8a488ea26d1a274845a8297d42546e",
+    "msg2_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6be424c9892b5e8994ddbe0ec92b936077"
+  },
+  "note": "phone = initiator, pc = responder. Handshake payloads empty, no prologue, no PSK.",
+  "pattern": "Noise_KK_25519_ChaChaPoly_BLAKE2s",
+  "pc": {
+    "ephemeral_hex": "4444444444444444444444444444444444444444444444444444444444444444",
+    "x25519_public_hex": "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20",
+    "x25519_secret_hex": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "phone": {
+    "ephemeral_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+    "x25519_public_hex": "7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13",
+    "x25519_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "reject": {
+    "tampered_expect": "SessionEnded",
+    "tampered_pc_to_phone_ciphertext_hex": "ea63b199937745687d5960aebadce16c545a54cf707c32ef91",
+    "wrong_pc_expect": "HandshakeFailed",
+    "wrong_pc_public_hex": "ba193836cff1f4e866c139715d306408d26a76f76d638a39afc1001084d25411"
+  },
+  "schema_version": 1,
+  "transport": {
+    "pc_to_phone": [
+      {
+        "ciphertext_hex": "6520a8908660473f3ac317db2d1a28e0a0a715f420a2c9f4e1602d5255da6a",
+        "plaintext_hex": "7b2274797065223a22706f6e67227d"
+      },
+      {
+        "ciphertext_hex": "e9dfcd5d32d65915ab10575d07602da4fb3bb526a5a587f015499d4ab5a9c1ca1d12b7ce8a6182",
+        "plaintext_hex": "7b226465636973696f6e223a22617070726f766564227d"
+      }
+    ],
+    "phone_to_pc": [
+      {
+        "ciphertext_hex": "807f79cc36a0c97703a010ab255f9e6c6a29974c059da10eb998e013f6c6d7",
+        "plaintext_hex": "7b2274797065223a2270696e67227d"
+      },
+      {
+        "ciphertext_hex": "9463dcf7d90e658d34138d0d5056b2ee1d88888466e2802682ba758b6a2393e86a2306f5175ab46ca1bb",
+        "plaintext_hex": "61207365636f6e64207472616e73706f7274206d657373616765"
+      },
+      {
+        "ciphertext_hex": "56edda1a111812ccce6ed03aa3017f3a",
+        "plaintext_hex": ""
+      }
+    ]
+  }
+}

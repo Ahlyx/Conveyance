@@ -45,6 +45,11 @@ compile_error!(
 use conveyance_crypto::Secret;
 use thiserror::Error;
 
+/// Cross-implementation handshake + transport test vectors. Needs the
+/// fixed-ephemeral seam, so it is gated the same way.
+#[cfg(any(test, feature = "test-vectors"))]
+pub mod fixtures;
+
 /// Every way this crate can fail. Deliberately two coarse variants: a
 /// security product must not hand callers an oracle for *which* internal
 /// check failed. The strings match the PC-side `ConveyanceError` codes so
@@ -108,6 +113,34 @@ impl SessionHandshake {
         local_static: &Secret<32>,
         remote_static: &[u8; 32],
     ) -> Result<Self, NoiseError> {
+        Self::build(role, local_static, remote_static, None)
+    }
+
+    /// **Test / fixture only.** A handshake with a caller-supplied
+    /// ephemeral instead of a fresh random one.
+    ///
+    /// A fixed ephemeral makes the handshake bytes deterministic given
+    /// fixed statics — which is exactly what the cross-implementation
+    /// `noise_fixtures.json` vectors need to pin. It also destroys
+    /// forward secrecy, so it is gated behind `test-vectors` (which
+    /// itself refuses to build with `debug_assertions` off — see the
+    /// crate-level `compile_error!`).
+    #[cfg(any(test, feature = "test-vectors"))]
+    pub fn with_fixed_ephemeral(
+        role: Role,
+        local_static: &Secret<32>,
+        remote_static: &[u8; 32],
+        ephemeral: &[u8; 32],
+    ) -> Result<Self, NoiseError> {
+        Self::build(role, local_static, remote_static, Some(ephemeral))
+    }
+
+    fn build(
+        role: Role,
+        local_static: &Secret<32>,
+        remote_static: &[u8; 32],
+        fixed_ephemeral: Option<&[u8; 32]>,
+    ) -> Result<Self, NoiseError> {
         // KK means BOTH sides already know each other's statics (learned
         // during pairing). Setting remote_public_key on the responder too
         // is what makes a wrong-static peer fail its MAC check rather
@@ -115,15 +148,18 @@ impl SessionHandshake {
         //
         // Snow's default (pure-Rust) crypto provider is used via feature
         // defaults; the primitives underneath are the same ones our
-        // standalone crypto module pins.
+        // standalone crypto module pins. No prologue, no PSK (spec).
         let params = PATTERN.parse().map_err(handshake_failed)?;
         // snow 0.10's builder setters return Results (they validate key
         // lengths); every failure is pre-session setup, mapped generic.
-        let builder = snow::Builder::new(params)
+        let mut builder = snow::Builder::new(params)
             .local_private_key(local_static.expose().as_slice())
             .map_err(handshake_failed)?
             .remote_public_key(remote_static)
             .map_err(handshake_failed)?;
+        if let Some(eph) = fixed_ephemeral {
+            builder = builder.fixed_ephemeral_key_for_testing_only(eph.as_slice());
+        }
 
         let inner = match role {
             Role::Initiator => builder.build_initiator(),

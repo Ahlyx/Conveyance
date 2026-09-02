@@ -9,6 +9,10 @@ description = "Conveyance session handshake: a thin wrapper over snow for the fi
 conveyance-crypto = { path = "../conveyance-crypto" }
 snow.workspace = true
 thiserror.workspace = true
+# Only the `fixtures` module (test vectors) and its emitter use this;
+# kept unconditional — like conveyance-wire — so the drift check runs in
+# plain `cargo test`.
+serde_json.workspace = true
 
 [features]
 # Exposes a fixed-ephemeral handshake constructor for cross-implementation
@@ -17,6 +21,12 @@ thiserror.workspace = true
 # so a top-of-crate compile guard (see lib.rs) refuses to build this with
 # optimizations / debug_assertions off — it may only reach a debug build.
 test-vectors = []
+
+[[example]]
+name = "emit_noise_fixtures"
+# The `fixtures` module it prints is behind `test-vectors`; skip this
+# example (rather than fail to compile) when the feature is off.
+required-features = ["test-vectors"]
 
 [dev-dependencies]
 conveyance-crypto = { path = "../conveyance-crypto", features = ["test-support"] }
