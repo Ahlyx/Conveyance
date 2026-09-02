@@ -680,7 +680,9 @@ Follow persistent rules. Propose your plan before writing code.
   cross-impl fixture parity + the `conveyance-wire` leaf-crate extract +
   the `PhoneLink` transport seam, all JVM-testable) and **10.3b** (the
   Android `BluetoothGattServer` + advertiser + permissions + disconnect
-  handling, emulator/device-bound). Full review gate between them.
+  handling, emulator/device-bound). **Closed** — see
+  `PHASE_10.3_EXIT.md` for per-criterion evidence and the Phase 11
+  hardware carry-over.
 - **10.4** — Noise KK session (Kotlin implementation or JNI to Rust —
   same decision as 10.1).
 - **10.5** — Pairing ceremony (phone side): QR scanner, PairingConfirm
@@ -861,6 +863,13 @@ your PC and phone, pair, and use to gate a real API call.
   applies here).
 - Battery usage during a 30-min active session is measured on the
   phone and documented.
+
+**BLE items carried from Phase 10.3** (see `PHASE_10.3_EXIT.md`): real
+advertise seen by the daemon's central; real MTU negotiation with a
+multi-frame message over ATT; `onNotificationSent` latency vs the 2 s
+`NOTIFY_ACK_TIMEOUT_MS`; physical mid-message disconnect, adapter toggle
+under a live connection, CCCD cleared by a real central; advertiser
+`onStartSuccess` on real hardware; nRF Connect as an interim central.
 
 **Prompt.**
 
