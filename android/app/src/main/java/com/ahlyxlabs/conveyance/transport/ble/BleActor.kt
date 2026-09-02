@@ -61,7 +61,12 @@ class BleActor(
     private val notifyResults = Channel<Boolean>(Channel.CONFLATED)
     private val sendMutex = Mutex()
     private var currentMaxWriteLen = Frame.maxFramePayload(Frame.MIN_ATT_MTU)
-    private var torn = false
+
+    // attachServer() is called from BlePeripheral.start() on the caller's
+    // thread, not necessarily @BleDispatcher; teardown() (which sets this)
+    // always runs on @BleDispatcher. @Volatile so attachServer's guard
+    // read is guaranteed to observe a teardown that already happened.
+    @Volatile private var torn = false
     private var teardownReason: LinkTeardown? = null
 
     /** The usable link, non-null from `SUBSCRIBED` until teardown. */
@@ -79,8 +84,18 @@ class BleActor(
      * Wire the server handle once `openGattServer` has returned, and
      * start watching for the adapter turning off. Both are released in
      * [teardown].
+     *
+     * If teardown already happened — an event processed between
+     * `openGattServer()` returning and this call landing, e.g. a stale
+     * disconnect — the handle this call was just given would otherwise
+     * never be closed and the watch never stopped, since a second
+     * [teardown] call is a no-op (finding #4). Closing it here instead.
      */
     fun attachServer(handle: GattServerHandle) {
+        if (torn) {
+            handle.close()
+            return
+        }
         server = handle
         adapterWatch?.start { onEvent(ConnectionStateMachine.Event.AdapterOff) }
     }
@@ -116,11 +131,14 @@ class BleActor(
     }
 
     /**
-     * The single teardown path. Reached either from a
-     * [ConnectionStateMachine.Effect.TearDown] on the event loop, or
-     * directly from [notifyOnce] when a notification fails — so it sets
-     * [_state] itself rather than relying on the loop, which stops here
-     * (the event channel is closed). Idempotent.
+     * The single teardown path — reached only from [process]'s handling
+     * of [ConnectionStateMachine.Effect.TearDown] on the event loop. A
+     * notify failure in [notifyOnce] posts [ConnectionStateMachine.Event.NotifyFailed]
+     * rather than calling this directly, so [_state] only ever advances
+     * here, together with [ConnectionStateMachine]'s own state (finding
+     * #2: two independent writers previously let a buffered event
+     * processed after a direct teardown revert [_state] to a live value).
+     * Idempotent.
      */
     private fun teardown(reason: LinkTeardown) {
         if (torn) return
@@ -131,6 +149,10 @@ class BleActor(
         adapterWatch?.stop()
         server?.close()
         server = null
+        // Unblocks a notifyOnce() concurrently suspended awaiting an ack
+        // (finding #8) instead of leaving it to wait out the full
+        // NOTIFY_ACK_TIMEOUT_MS after the link is already gone.
+        notifyResults.close()
         linkEvents.trySend(LinkEvent.Torn(reason))
         linkEvents.close()
         events.close()
@@ -151,12 +173,22 @@ class BleActor(
             while (notifyResults.tryReceive().isSuccess) { /* drain */ }
 
             if (!srv.notify(frame)) {
-                teardown(LinkTeardown.PeerDisconnected)
+                onEvent(ConnectionStateMachine.Event.NotifyFailed)
                 throw LinkClosedException(LinkTeardown.PeerDisconnected)
             }
-            val delivered = withTimeoutOrNull(NOTIFY_ACK_TIMEOUT_MS) { notifyResults.receive() }
+            // receiveCatching, not receive: teardown() closes notifyResults
+            // as part of the TORN transition, so a concurrent event-loop
+            // teardown (e.g. CentralDisconnected mid-send) unblocks this
+            // wait immediately instead of running out the full timeout
+            // (finding #8). A closed channel here means teardown already
+            // happened elsewhere; reuse its recorded reason rather than
+            // firing a second, redundant NotifyFailed.
+            val delivered = withTimeoutOrNull(NOTIFY_ACK_TIMEOUT_MS) {
+                notifyResults.receiveCatching().getOrNull()
+            }
             if (delivered != true) {
-                teardown(LinkTeardown.PeerDisconnected)
+                if (torn) throw LinkClosedException(teardownReason ?: LinkTeardown.PeerDisconnected)
+                onEvent(ConnectionStateMachine.Event.NotifyFailed)
                 throw LinkClosedException(LinkTeardown.PeerDisconnected)
             }
         }

@@ -53,6 +53,7 @@ class ConnectionStateMachineTest {
             Event.CentralDisconnected to LinkTeardown.PeerDisconnected,
             Event.AdapterOff to LinkTeardown.AdapterOff,
             Event.ShutdownRequested to LinkTeardown.LocalShutdown,
+            Event.NotifyFailed to LinkTeardown.PeerDisconnected,
         )) {
             val fresh = ConnectionStateMachine()
             fresh.on(Event.CentralConnected)
@@ -75,6 +76,7 @@ class ConnectionStateMachineTest {
             Event.CentralDisconnected,
             Event.AdapterOff,
             Event.ShutdownRequested,
+            Event.NotifyFailed,
         )) {
             assertEquals("after TORN: $e", emptyList<Effect>(), sm.on(e))
             assertEquals(State.TORN, sm.state)

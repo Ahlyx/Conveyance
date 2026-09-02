@@ -42,6 +42,15 @@ class ConnectionStateMachine {
         data object CentralDisconnected : Event
         data object AdapterOff : Event
         data object ShutdownRequested : Event
+
+        /**
+         * A notify the actor sent was rejected or never acked (10.3b
+         * remediation finding #2/#8). Kept distinct from
+         * [CentralDisconnected] — same [LinkTeardown.PeerDisconnected]
+         * reason and same unconditional teardown, but a separate origin
+         * worth telling apart in logs/observability.
+         */
+        data object NotifyFailed : Event
     }
 
     sealed interface Effect {
@@ -111,6 +120,7 @@ class ConnectionStateMachine {
             Event.CentralDisconnected -> tearDown(LinkTeardown.PeerDisconnected)
             Event.AdapterOff -> tearDown(LinkTeardown.AdapterOff)
             Event.ShutdownRequested -> tearDown(LinkTeardown.LocalShutdown)
+            Event.NotifyFailed -> tearDown(LinkTeardown.PeerDisconnected)
         }
     }
 

@@ -110,6 +110,96 @@ class BleActorTest {
         assertEquals(1, fake.closeCount)
     }
 
+    // -- teardown consolidation (10.3b remediation #2, #4, #8) -----------
+
+    @Test
+    fun bufferedEventAfterNotifyFailureDoesNotRevertState() = runTest(dispatcher) {
+        // Reproduces finding #2: notifyOnce()'s failure path used to call
+        // teardown() directly, writing _state without advancing the
+        // ConnectionStateMachine's own state — so a binder-thread event
+        // already queued (an MtuChanged here; a duplicate Subscribed
+        // would do the same) got processed by a machine that still
+        // thought it was live, and process()'s unconditional
+        // `_state.value = machine.state` reverted _state to SUBSCRIBED.
+        //
+        // Ordering matters: the launch is queued first, then the stale
+        // event — so when runCurrent() drains the dispatcher, notifyOnce
+        // runs to its failure first (posting NotifyFailed to the back of
+        // the queue), then the already-queued MtuChanged is drained by a
+        // still-live machine, and only then does NotifyFailed reach the
+        // machine and actually tear down. Reversing this order would let
+        // MtuChanged drain before anything is in flight, proving nothing.
+        val a = actor()
+        a.driveToSubscribed(); runCurrent()
+        fake.notifyReturns = false
+
+        val job = launch {
+            try {
+                a.link!!.send(ByteArray(8))
+                fail("expected LinkClosedException")
+            } catch (_: LinkClosedException) { /* expected */ }
+        }
+        a.onEvent(Event.MtuChanged(23))
+        runCurrent()
+
+        assertTrue(job.isCompleted)
+        assertEquals(State.TORN, a.state.value)
+    }
+
+    @Test
+    fun attachServerAfterEarlyTeardownClosesTheHandleAndSkipsAdapterWatch() = runTest(dispatcher) {
+        // Reproduces finding #4: a teardown-triggering event processed
+        // between openGattServer() returning and attachServer() being
+        // called (both happen before attachServer, per BlePeripheral.start)
+        // used to tear down against server == null (a no-op close), then
+        // attachServer() unconditionally wired in the real handle and
+        // started a fresh adapter watch — neither ever released again,
+        // since a second teardown() is a no-op once torn is set.
+        val a = BleActor(dispatcher, fakeWatch) // not yet attached
+        a.shutdown()
+        runCurrent()
+        assertEquals(State.TORN, a.state.value)
+
+        a.attachServer(fake)
+
+        assertEquals(1, fake.closeCount)
+        assertFalse("adapterWatch must not start once already torn down", fakeWatch.started)
+    }
+
+    @Test
+    fun centralDisconnectDuringInFlightSendUnblocksImmediately() = runTest(dispatcher) {
+        // Reproduces finding #8: teardown() reached via the event loop
+        // (CentralDisconnected here) didn't unblock a concurrently
+        // in-flight notifyOnce() suspended awaiting its ack — it only
+        // touched _state/server/scope, never notifyResults — so send()
+        // sat for the full NOTIFY_ACK_TIMEOUT_MS after the disconnect was
+        // already known. No advanceTimeBy here: the assertion is that the
+        // job completes from runCurrent() alone.
+        val a = actor()
+        a.driveToSubscribed(); runCurrent()
+
+        var thrown: LinkTeardown? = null
+        val job = launch {
+            try {
+                a.link!!.send(ByteArray(8))
+                fail("expected LinkClosedException")
+            } catch (e: LinkClosedException) {
+                thrown = e.reason
+            }
+        }
+        runCurrent()
+        assertEquals(1, fake.notifications.size)
+        assertTrue("send must still be waiting for the ack", job.isActive)
+
+        a.onEvent(Event.CentralDisconnected)
+        runCurrent()
+
+        assertTrue("send should unblock without needing the ack timeout", job.isCompleted)
+        assertSame(LinkTeardown.PeerDisconnected, thrown)
+        assertEquals(State.TORN, a.state.value)
+        assertEquals(1, fake.closeCount)
+    }
+
     // -- outbound: one notification in flight ----------------------------
 
     @Test
