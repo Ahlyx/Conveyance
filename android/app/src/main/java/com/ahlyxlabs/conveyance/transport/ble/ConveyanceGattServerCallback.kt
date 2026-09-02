@@ -15,15 +15,19 @@ import com.ahlyxlabs.conveyance.transport.ConnectionStateMachine
  *
  * [handle] is a supplier because the server handle only exists after
  * `openGattServer` returns, which is after this callback is constructed.
+ * [deviceSink] receives the connected central (or null on disconnect) so
+ * the real handle knows whom to notify / respond to.
  */
 class ConveyanceGattServerCallback(
     private val actor: BleActor,
     private val handle: () -> GattServerHandle?,
+    private val deviceSink: (BluetoothDevice?) -> Unit = {},
 ) : BluetoothGattServerCallback() {
 
     override fun onConnectionStateChange(device: BluetoothDevice?, status: Int, newState: Int) {
         val connected =
             newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS
+        deviceSink(if (connected) device else null)
         actor.onEvent(
             if (connected) {
                 ConnectionStateMachine.Event.CentralConnected
@@ -46,9 +50,13 @@ class ConveyanceGattServerCallback(
         offset: Int,
         value: ByteArray?,
     ) {
-        // Inbound app data on pc_to_phone_tx is handed to the framing
-        // path in commit 4. The central normally writes without response;
-        // the with-response fallback still needs one or it stalls.
+        val charUuid = characteristic?.uuid
+        if (charUuid != null && ConveyanceGattProfile.isInboundWrite(charUuid) && value != null) {
+            // Copy: the framework reuses this buffer.
+            actor.onInboundBytes(value.copyOf())
+        }
+        // The central normally writes without response; the with-response
+        // fallback still needs one or the write stalls.
         if (responseNeeded) {
             handle()?.sendResponse(requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
         }
@@ -82,6 +90,6 @@ class ConveyanceGattServerCallback(
     }
 
     override fun onNotificationSent(device: BluetoothDevice?, status: Int) {
-        // Wired to the one-notification-in-flight gate in commit 4.
+        actor.onNotificationResult(status == BluetoothGatt.GATT_SUCCESS)
     }
 }
