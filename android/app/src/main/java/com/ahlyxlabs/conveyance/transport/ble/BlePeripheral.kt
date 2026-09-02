@@ -84,18 +84,29 @@ class BlePeripheral @Inject constructor(
             server,
             service.getCharacteristic(ConveyanceGattProfile.PHONE_TO_PC_TX),
         )
-        runCatching { server.addService(service) }
+        val added = runCatching { server.addService(service) }.getOrDefault(false)
+        if (!added) {
+            server.close()
+            onUnavailable(BleUnavailable.GattServiceUnavailable)
+            return false
+        }
         newActor.attachServer(handle)
         actor = newActor
 
+        // advertiser.start() may call onUnavailable synchronously (adapter
+        // off, permission revoked mid-call) before returning here — in
+        // that case the session it just tore down via stop() must not be
+        // reported as started.
+        var unavailableFiredSynchronously = false
         advertiser.start(
             onStarted = {},
             onUnavailable = { reason ->
+                unavailableFiredSynchronously = true
                 stop()
                 onUnavailable(reason)
             },
         )
-        return true
+        return !unavailableFiredSynchronously
     }
 
     /** Stop advertising and tear the session down. Idempotent. */

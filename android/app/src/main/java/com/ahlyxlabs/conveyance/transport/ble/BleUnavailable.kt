@@ -18,6 +18,12 @@ sealed class BleUnavailable(val reason: String) {
 
     /** A BLE session is already advertising or connected. */
     data object AlreadyActive : BleUnavailable("a BLE session is already active")
+
+    /** `addService` rejected the Conveyance GATT profile, or threw. */
+    data object GattServiceUnavailable : BleUnavailable("could not register the GATT service")
+
+    /** `stop()` was called before the in-flight `start()` could report an outcome. */
+    data object Stopped : BleUnavailable("advertising was stopped before it started")
 }
 
 /** Thrown from the start path when BLE cannot come up. */
