@@ -1,13 +1,14 @@
 //! UniFFI bridge over `conveyance-crypto` for the Android phone side.
 //!
-//! **Phase 10.1 — the full primitive surface.** The spike (one function,
+//! **The Android Rust bridge.** Phase 10.1's spike (one function,
 //! `hkdf_blake2s`) proved the toolchain end to end: `conveyance-crypto`
 //! cross-compiles to Android, UniFFI generates Kotlin bindings, and a
 //! value round-trips through them byte-identically to the Rust reference
-//! on a real emulator. This crate now bridges every primitive Phase 10.1
+//! on a real emulator. This crate now bridges every primitive the app
 //! needs — recovery-phrase derivation, Ed25519, canonical JSON, the
 //! signing-payload construction, Argon2id, ChaCha20-Poly1305, HKDF-BLAKE2s,
-//! and the SHA-256 hash chain.
+//! the SHA-256 hash chain — plus (phase 10.4) the `Noise_KK` session
+//! over `conveyance-noise` ([`noise`]). Same `.so`, same binding module.
 //!
 //! Design rules, unchanged from the spike and load-bearing as this grows:
 //!
@@ -41,6 +42,7 @@ pub mod canonical;
 pub mod hashchain;
 pub mod hkdf;
 pub mod kdf;
+pub mod noise;
 pub mod recovery;
 pub mod sealed;
 pub mod sign;

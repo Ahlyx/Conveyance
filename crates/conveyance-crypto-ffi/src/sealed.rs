@@ -71,6 +71,15 @@ pub struct UnlockedIdentity {
     secrets: sealed::IdentitySecrets,
 }
 
+impl UnlockedIdentity {
+    /// The long-term X25519 static secret, for building the Noise KK
+    /// handshake in the [`crate::noise`] module. `pub(crate)` — it stays
+    /// in native memory and never reaches the FFI surface.
+    pub(crate) fn x25519_static(&self) -> [u8; 32] {
+        self.secrets.x25519()
+    }
+}
+
 #[uniffi::export]
 impl UnlockedIdentity {
     /// The long-term Ed25519 identity public key (32 bytes).

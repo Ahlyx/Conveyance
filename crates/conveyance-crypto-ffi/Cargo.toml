@@ -13,6 +13,10 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 conveyance-crypto = { path = "../conveyance-crypto" }
+# Noise KK session (phase 10.4). Wrapped as an opaque `NoiseSession`
+# UniFFI object; the phone's X25519 static is read from the
+# `UnlockedIdentity` handle (same crate) and never crosses back out.
+conveyance-noise = { path = "../conveyance-noise" }
 # Canonical-JSON input crosses the FFI boundary as a JSON string; this
 # crate parses it to a `serde_json::Value` before handing it to
 # `conveyance-crypto`, exactly mirroring the PC side's parse-then-
@@ -22,6 +26,14 @@ thiserror.workspace = true
 # `cli` provides `uniffi::uniffi_bindgen_main` for the bin below. Library
 # mode (generate bindings from the compiled .so) needs no UDL file.
 uniffi = { workspace = true, features = ["cli"] }
+
+[features]
+# Forwards to conveyance-noise/test-vectors: exposes
+# `noise_initiate_with_fixed_ephemeral` for the instrumented Noise parity
+# suite. Default OFF; the Gradle wiring only enables it for the
+# instrumented-test .so, never a release build (see conveyance-noise's
+# top-of-crate compile guard).
+test-vectors = ["conveyance-noise/test-vectors"]
 
 [[bin]]
 name = "uniffi-bindgen"
