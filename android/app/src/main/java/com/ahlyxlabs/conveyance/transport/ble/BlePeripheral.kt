@@ -118,7 +118,21 @@ class BlePeripheral @Inject constructor(
         return !unavailableFiredSynchronously
     }
 
-    /** Stop advertising and tear the session down. Idempotent. */
+    /**
+     * Stop advertising and tear the session down. Idempotent.
+     *
+     * Re-entrancy note: if this is called while a start()'s
+     * advertiser.start() is still resolving, advertiser.stop() now
+     * synchronously fulfills that start's outcome via the onUnavailable
+     * closure above, which calls back into this method a second time,
+     * from inside this call. That's deliberate and safe by construction:
+     * by the time it re-enters, advertiser.stop() has already cleared
+     * its own activeCallback (its early-return guard makes the nested
+     * advertiser.stop() a no-op), and actor is already null on the
+     * outer call's next line regardless of which invocation nulls it
+     * first — so the nested call and the resuming outer call each only
+     * repeat work the other already finished.
+     */
     @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
     fun stop() {
         advertiser.stop()

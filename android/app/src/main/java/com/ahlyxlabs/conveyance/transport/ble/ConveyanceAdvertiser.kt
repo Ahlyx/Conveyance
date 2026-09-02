@@ -39,9 +39,15 @@ class ConveyanceAdvertiser @Inject constructor(
     private var watchdog: Runnable? = null
     private var outcomeDelivered = false
 
+    /** The in-flight start()'s onUnavailable, so stop() can fulfill it if called before an outcome arrives. */
+    private var pendingUnavailable: ((BleUnavailable) -> Unit)? = null
+
     /**
      * Begin advertising. Exactly one of [onStarted] / [onUnavailable] is
-     * invoked, within [START_WATCHDOG_MS] at the latest.
+     * invoked, within [START_WATCHDOG_MS] at the latest — including when
+     * [stop] is called before either arrives (finding #6): that resolves
+     * the outcome as [BleUnavailable.Stopped] rather than leaving the
+     * caller to wait indefinitely.
      *
      * Callers must hold `BLUETOOTH_ADVERTISE` (API 31+) — checked via
      * [BlePermissions] at session start. A mid-session revocation still
@@ -91,6 +97,7 @@ class ConveyanceAdvertiser @Inject constructor(
             }
         }
         activeCallback = callback
+        pendingUnavailable = onUnavailable
 
         val wd = Runnable {
             if (consume(callback)) {
@@ -117,13 +124,28 @@ class ConveyanceAdvertiser @Inject constructor(
         }
     }
 
-    /** Stop advertising. No-op if not running. */
+    /**
+     * Stop advertising. No-op if not running.
+     *
+     * If a [start] call is still unresolved (no onStartSuccess,
+     * onStartFailure, or watchdog outcome has arrived yet), this call
+     * IS that outcome: [pendingUnavailable] fires with
+     * [BleUnavailable.Stopped] before the advertisement is torn down,
+     * so `start()`'s "exactly one callback" contract still holds instead
+     * of leaving the caller to wait out the watchdog for nothing
+     * (finding #6).
+     */
     @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
     fun stop() {
         watchdog?.let { mainHandler.removeCallbacks(it) }
         watchdog = null
-        val callback = activeCallback ?: return
+        val callback = activeCallback ?: run { pendingUnavailable = null; return }
+        val notify = pendingUnavailable
+        val wasPending = consume(callback)
         activeCallback = null
+        pendingUnavailable = null
+        if (wasPending) notify?.invoke(BleUnavailable.Stopped)
+
         val advertiser = context.getSystemService(BluetoothManager::class.java)
             ?.adapter
             ?.bluetoothLeAdvertiser
@@ -137,7 +159,7 @@ class ConveyanceAdvertiser @Inject constructor(
     /**
      * Claim the single start outcome for [callback]: true the first time,
      * false for every later contender (a late framework callback racing
-     * the watchdog, or vice versa). Also cancels the watchdog.
+     * the watchdog, or racing [stop]). Also cancels the watchdog.
      */
     private fun consume(callback: AdvertiseCallback): Boolean {
         if (activeCallback !== callback || outcomeDelivered) return false

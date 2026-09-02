@@ -1,8 +1,10 @@
 package com.ahlyxlabs.conveyance.transport.ble
 
+import android.bluetooth.BluetoothManager
 import android.content.pm.PackageManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -47,5 +49,34 @@ class ConveyanceAdvertiserInstrumentedTest {
         )
         assertTrue("expected exactly one outcome, got $outcomes", outcomes.size == 1)
         advertiser.stop() // must not throw regardless of branch
+    }
+
+    @Test
+    @Suppress("MissingPermission")
+    fun stopImmediatelyAfterStartReportsStoppedRatherThanHanging() {
+        // Finding #6: stop() called before start()'s real outcome
+        // arrives used to silently drop the callback. startAdvertising()
+        // is a genuinely async binder call, so calling stop() on the
+        // same thread right after start() returns is deterministic — the
+        // real onStartSuccess/onStartFailure cannot have arrived yet.
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        assumeTrue(ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE))
+        // Only meaningful if start() would actually go async: the
+        // adapter/advertiser-null branches resolve synchronously inside
+        // start() itself, before stop() has anything in-flight to race.
+        val adapter = ctx.getSystemService(BluetoothManager::class.java)?.adapter
+        assumeTrue("bluetooth adapter unavailable/off", adapter?.isEnabled == true)
+        assumeTrue("device cannot advertise at all", adapter?.bluetoothLeAdvertiser != null)
+
+        val advertiser = ConveyanceAdvertiser(ctx)
+        val outcomes = mutableListOf<String>()
+        advertiser.start(
+            onStarted = { outcomes += "started" },
+            onUnavailable = { outcomes += "unavailable:${it.reason}" },
+        )
+        advertiser.stop()
+
+        assertEquals(listOf("unavailable:${BleUnavailable.Stopped.reason}"), outcomes)
+        advertiser.stop() // idempotent
     }
 }
