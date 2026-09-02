@@ -2,6 +2,7 @@ package com.ahlyxlabs.conveyance.session
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.ahlyxlabs.conveyance.testutil.hexToBytes
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertThrows
@@ -33,8 +34,8 @@ class NoiseSessionRoundTripTest {
         )
     }
 
-    private fun phone(k: String) = fx.getJSONObject("phone").getString(k).hex()
-    private fun pc(k: String) = fx.getJSONObject("pc").getString(k).hex()
+    private fun phone(k: String) = fx.getJSONObject("phone").getString(k).hexToBytes()
+    private fun pc(k: String) = fx.getJSONObject("pc").getString(k).hexToBytes()
 
     private fun initiator(pcPublic: ByteArray = pc("x25519_public_hex")) =
         NoiseTestVectors.initiateWithFixedEphemeral(
@@ -68,7 +69,7 @@ class NoiseSessionRoundTripTest {
 
     @Test
     fun wrongPeerStaticFailsGenericAtTheResponder() {
-        initiator(fx.getJSONObject("reject").getString("wrong_pc_public_hex").hex()).use { i ->
+        initiator(fx.getJSONObject("reject").getString("wrong_pc_public_hex").hexToBytes()).use { i ->
             responder().use { r ->
                 val m1 = i.writeHandshakeMessage()
                 assertThrows(SessionException.HandshakeFailed::class.java) {
@@ -84,10 +85,5 @@ class NoiseSessionRoundTripTest {
             assertThrows(SessionException.WrongPhase::class.java) { r.encrypt(ByteArray(4)) }
             assertThrows(SessionException.WrongPhase::class.java) { r.decrypt(ByteArray(20)) }
         }
-    }
-
-    private fun String.hex(): ByteArray {
-        require(length % 2 == 0)
-        return ByteArray(length / 2) { substring(it * 2, it * 2 + 2).toInt(16).toByte() }
     }
 }

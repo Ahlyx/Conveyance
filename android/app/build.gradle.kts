@@ -9,25 +9,38 @@ plugins {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 10.1 UniFFI spike — Rust crypto bridge.
+// Rust bridge — conveyance-crypto-ffi cross-compiled + UniFFI bindings.
 //
-// Two independent Cargo steps feed the Android build, both hung off
-// preBuild:
-//   * cargoNdkBuild       — `cargo ndk` cross-compiles conveyance-crypto-ffi
-//                           to a .so per ABI, straight into
-//                           src/main/jniLibs/<abi>/ for packaging.
-//   * generateUniffiBindings — builds the ffi crate for the *host* and runs
-//                           uniffi-bindgen (library mode, no .udl) against
-//                           that. The bindings are ABI-independent; reading
-//                           the host lib avoids uniffi-bindgen's library
-//                           reader needing to parse a foreign object format
-//                           (it can't read an ELF .so on a Windows host).
-//                           The UniFFI checksum guard still matches the
-//                           packaged .so at runtime — same source, same
-//                           interface.
-// Both declare outputs, so `clean` and up-to-date checks work. The whole
-// block is self-contained: deleting it plus the jniLibs dir reverts the
-// app to pure Kotlin.
+// Introduced in phase 10.1 (crypto spike); rewritten to a VARIANT SPLIT in
+// phase 10.4. Per variant, three Cargo steps feed the Android build, hung
+// off pre<Variant>Build:
+//   * cargoNdkBuild<Variant>       — `cargo ndk` cross-compiles the ffi
+//                                    crate to a .so per ABI, into
+//                                    src/<variant>/jniLibs/<abi>/.
+//   * cargoBuildHostFfi<Variant>   — builds the ffi crate for the *host*
+//                                    so uniffi-bindgen can read its
+//                                    metadata (its library reader can't
+//                                    parse a foreign-ABI .so on a Windows
+//                                    host).
+//   * generateUniffiBindings<Var>  — runs uniffi-bindgen (library mode, no
+//                                    .udl) against that host lib, into
+//                                    build/generated/uniffi/<variant>,
+//                                    wired as sourceSets["<variant>"].
+//
+// Why the split (phase 10.4): the DEBUG variant enables
+// `conveyance-crypto-ffi/test-vectors`, which exports
+// `noiseInitiateWithFixedEphemeral` for the Noise handshake parity suite
+// (fixed ephemeral -> deterministic handshake bytes). It builds the DEV
+// profile because conveyance-noise refuses to compile `test-vectors` with
+// `debug_assertions` off. The RELEASE variant is the optimized .so with
+// no test-only surface. Each variant carries its own bindings so the
+// generated Kotlin always matches the .so it loads (UniFFI's runtime
+// contract checksum would otherwise fault). CI builds only the debug
+// variant. `./gradlew build` locally runs both and will thrash the shared
+// cargo target dir — assemble a single variant if that matters.
+//
+// The whole block is self-contained: deleting it plus src/*/jniLibs
+// reverts the app to pure Kotlin.
 // ---------------------------------------------------------------------------
 val rustWorkspaceRoot: File = rootProject.projectDir.parentFile
 val ffiCrate = "conveyance-crypto-ffi"
@@ -36,18 +49,6 @@ val ffiCrate = "conveyance-crypto-ffi"
 // real-device target, x86_64 is what CI's emulator runs. No 32-bit.
 val androidAbis = listOf("arm64-v8a", "x86_64")
 
-// --- Variant-split Rust build (phase 10.4) ---------------------------------
-// The DEBUG variant enables `conveyance-crypto-ffi/test-vectors`, which
-// exports `noiseInitiateWithFixedEphemeral` for the Noise handshake parity
-// suite (fixed ephemeral -> deterministic handshake bytes to pin against
-// the Rust reference). It builds the DEV profile because conveyance-noise
-// has a compile guard that refuses `test-vectors` with `debug_assertions`
-// off. The RELEASE variant is the optimized .so with no test-only surface.
-//
-// Each variant feeds its own jniLibs dir and its own UniFFI bindings dir,
-// so the generated Kotlin always matches the .so it loads against
-// (UniFFI's runtime contract checksum would otherwise fault). CI only
-// builds the debug variant.
 val uniffiConfig: File = rustWorkspaceRoot.resolve("crates/$ffiCrate/uniffi.toml")
 
 fun hostFfiLib(profileDir: String): File {

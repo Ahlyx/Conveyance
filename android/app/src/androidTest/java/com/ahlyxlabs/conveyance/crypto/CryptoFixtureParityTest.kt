@@ -2,6 +2,8 @@ package com.ahlyxlabs.conveyance.crypto
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.ahlyxlabs.conveyance.testutil.hexToBytes
+import com.ahlyxlabs.conveyance.testutil.toHex
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -45,7 +47,7 @@ class CryptoFixtureParityTest {
     fun hkdfBlake2s() {
         forEachCase("hkdf_blake2s") { c ->
             val okm = crypto.hkdfBlake2s(
-                c.getString("ikm_hex").hex(),
+                c.getString("ikm_hex").hexToBytes(),
                 c.getString("info_utf8").toByteArray(Charsets.US_ASCII),
                 c.getInt("length"),
             )
@@ -92,9 +94,9 @@ class CryptoFixtureParityTest {
     fun ed25519() {
         val group = fixtures.getJSONObject("ed25519")
         group.getJSONArray("cases").objects().forEach { c ->
-            val secret = Ed25519SecretKey(c.getString("secret_hex").hex())
-            val message = c.getString("message_hex").hex()
-            val public = Ed25519PublicKey(c.getString("public_hex").hex())
+            val secret = Ed25519SecretKey(c.getString("secret_hex").hexToBytes())
+            val message = c.getString("message_hex").hexToBytes()
+            val public = Ed25519PublicKey(c.getString("public_hex").hexToBytes())
 
             assertHex(c.getString("public_hex"), crypto.ed25519PublicKey(secret).bytes)
             val sig = crypto.sign(secret, message)
@@ -104,9 +106,9 @@ class CryptoFixtureParityTest {
 
         val fail = group.getJSONObject("verify_fail")
         val result = crypto.verify(
-            Ed25519PublicKey(fail.getString("public_hex").hex()),
-            fail.getString("message_hex").hex(),
-            Ed25519Signature(fail.getString("signature_hex").hex()),
+            Ed25519PublicKey(fail.getString("public_hex").hexToBytes()),
+            fail.getString("message_hex").hexToBytes(),
+            Ed25519Signature(fail.getString("signature_hex").hexToBytes()),
         )
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull() is CryptoException.SignatureInvalid)
@@ -117,7 +119,7 @@ class CryptoFixtureParityTest {
         forEachCase("argon2id_dek") { c ->
             val dek = crypto.deriveDek(
                 c.getString("passphrase_utf8").toByteArray(Charsets.UTF_8),
-                c.getString("salt_hex").hex(),
+                c.getString("salt_hex").hexToBytes(),
             )
             assertHex(c.getString("dek_hex"), dek.bytes())
         }
@@ -127,10 +129,10 @@ class CryptoFixtureParityTest {
     fun aeadChaCha20Poly1305() {
         val group = fixtures.getJSONObject("aead_chacha20poly1305")
         group.getJSONArray("cases").objects().forEach { c ->
-            val key = AeadKey(c.getString("key_hex").hex())
-            val nonce = AeadNonce(c.getString("nonce_hex").hex())
-            val aad = c.getString("aad_hex").hex()
-            val plaintext = c.getString("plaintext_hex").hex()
+            val key = AeadKey(c.getString("key_hex").hexToBytes())
+            val nonce = AeadNonce(c.getString("nonce_hex").hexToBytes())
+            val aad = c.getString("aad_hex").hexToBytes()
+            val plaintext = c.getString("plaintext_hex").hexToBytes()
 
             val sealed = crypto.seal(key, nonce, plaintext, aad)
             assertHex(c.getString("sealed_hex"), sealed)
@@ -142,10 +144,10 @@ class CryptoFixtureParityTest {
 
         val t = group.getJSONObject("tamper")
         val opened = crypto.open(
-            AeadKey(t.getString("key_hex").hex()),
-            AeadNonce(t.getString("nonce_hex").hex()),
-            t.getString("sealed_hex").hex(),
-            t.getString("aad_hex").hex(),
+            AeadKey(t.getString("key_hex").hexToBytes()),
+            AeadNonce(t.getString("nonce_hex").hexToBytes()),
+            t.getString("sealed_hex").hexToBytes(),
+            t.getString("aad_hex").hexToBytes(),
         )
         assertTrue(opened.isFailure)
         assertTrue(opened.exceptionOrNull() is CryptoException.DecryptionFailed)
@@ -173,8 +175,8 @@ class CryptoFixtureParityTest {
     fun sealedIdentity() {
         val g = fixtures.getJSONObject("sealed_identity")
         val phrase = RecoveryPhrase(g.getString("phrase"))
-        val contentKey = g.getString("content_key_hex").hex()
-        val message = g.getString("message_hex").hex()
+        val contentKey = g.getString("content_key_hex").hexToBytes()
+        val message = g.getString("message_hex").hexToBytes()
 
         val sealed = sealedCrypto.createSealedIdentity(phrase, contentKey)
         assertHex(g.getString("ed25519_public_hex"), sealed.ed25519Public.bytes)
@@ -189,7 +191,7 @@ class CryptoFixtureParityTest {
 
         val wrong = sealedCrypto.openSealedIdentity(
             sealed.blob,
-            g.getString("wrong_content_key_hex").hex(),
+            g.getString("wrong_content_key_hex").hexToBytes(),
         )
         assertTrue(wrong.isFailure)
         assertTrue(wrong.exceptionOrNull() is CryptoException.DecryptionFailed)
@@ -221,7 +223,7 @@ class CryptoFixtureParityTest {
     fun phoneLogRow() {
         val g = fixtures.getJSONObject("phone_log_row")
         val event = LogEvent(
-            reqId = g.getString("req_id_hex").hex(),
+            reqId = g.getString("req_id_hex").hexToBytes(),
             eventType = g.getString("event_type"),
             payloadJson = g.getString("payload_json"),
             timestamp = g.getLong("timestamp"),
@@ -235,9 +237,9 @@ class CryptoFixtureParityTest {
         assertHex(g.getString("signing_payload_hex"), payload)
 
         val verified = crypto.verify(
-            Ed25519PublicKey(g.getString("ed25519_public_hex").hex()),
+            Ed25519PublicKey(g.getString("ed25519_public_hex").hexToBytes()),
             payload,
-            Ed25519Signature(g.getString("signature_hex").hex()),
+            Ed25519Signature(g.getString("signature_hex").hexToBytes()),
         )
         assertTrue(verified.isSuccess)
     }
@@ -260,7 +262,7 @@ class CryptoFixtureParityTest {
     }
 
     private fun JSONObject.toLogEvent() = LogEvent(
-        reqId = getString("req_id_hex").hex(),
+        reqId = getString("req_id_hex").hexToBytes(),
         eventType = getString("event_type"),
         payloadJson = getString("payload_json"),
         timestamp = getLong("timestamp"),
@@ -269,8 +271,8 @@ class CryptoFixtureParityTest {
     private fun JSONArray.toChainRows(): List<ChainRow> = objects().map { r ->
         ChainRow(
             event = r.getJSONObject("event").toLogEvent(),
-            prevHash = r.getString("prev_hash_hex").hex(),
-            hash = r.getString("hash_hex").hex(),
+            prevHash = r.getString("prev_hash_hex").hexToBytes(),
+            hash = r.getString("hash_hex").hexToBytes(),
         )
     }
 
@@ -282,12 +284,4 @@ class CryptoFixtureParityTest {
 
     private fun assertArrayEquals(expected: ByteArray, actual: ByteArray) =
         org.junit.Assert.assertArrayEquals(expected, actual)
-
-    private fun String.hex(): ByteArray {
-        require(length % 2 == 0)
-        return ByteArray(length / 2) { substring(it * 2, it * 2 + 2).toInt(16).toByte() }
-    }
-
-    private fun ByteArray.toHex(): String =
-        joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 }

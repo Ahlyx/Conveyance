@@ -88,15 +88,13 @@ const PATTERN: &str = "Noise_KK_25519_ChaChaPoly_BLAKE2s";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
-    /// The side that sends message 1.
-    ///
-    /// TESTING ONLY: real Conveyance always has the phone as initiator
-    /// (the session starts from the phone app) and the PC daemon as
-    /// responder. The initiator path exists here so mock-endpoint tests
-    /// can drive both sides; phase 7's daemon must only ever take the
-    /// Responder arm.
+    /// Sends message 1. The **phone's** production role — the session
+    /// starts from the phone app (spec "Session start"); the phone side
+    /// reaches this through `conveyance-crypto-ffi`'s `noise_initiate`.
     Initiator,
-    /// The side that answers with message 2. The PC daemon's permanent role.
+    /// Answers with message 2. The **PC daemon's** permanent production
+    /// role. (Tests and the phone's `noise_respond` test seam also build
+    /// a responder to drive both sides in one process.)
     Responder,
 }
 

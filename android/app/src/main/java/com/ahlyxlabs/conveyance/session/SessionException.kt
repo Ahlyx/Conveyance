@@ -24,7 +24,4 @@ sealed class SessionException(message: String) : Exception(message) {
 
     /** A [NoiseSession] method was called in the wrong phase — a caller bug. */
     class WrongPhase(detail: String) : SessionException(detail)
-
-    /** The session is not ACTIVE — the phone-side cold-start guard (10.4b). */
-    class NotActive : SessionException("no active session")
 }

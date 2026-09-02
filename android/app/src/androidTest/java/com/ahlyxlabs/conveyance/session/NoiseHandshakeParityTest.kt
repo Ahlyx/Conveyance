@@ -2,6 +2,8 @@ package com.ahlyxlabs.conveyance.session
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.ahlyxlabs.conveyance.testutil.hexToBytes
+import com.ahlyxlabs.conveyance.testutil.toHex
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -40,8 +42,8 @@ class NoiseHandshakeParityTest {
         assertEquals("Noise_KK_25519_ChaChaPoly_BLAKE2s", fx.getString("pattern"))
     }
 
-    private fun phone(k: String) = fx.getJSONObject("phone").getString(k).hex()
-    private fun pc(k: String) = fx.getJSONObject("pc").getString(k).hex()
+    private fun phone(k: String) = fx.getJSONObject("phone").getString(k).hexToBytes()
+    private fun pc(k: String) = fx.getJSONObject("pc").getString(k).hexToBytes()
     private fun handshake(k: String) = fx.getJSONObject("handshake").getString(k)
     private fun reject(k: String) = fx.getJSONObject("reject").getString(k)
 
@@ -57,7 +59,7 @@ class NoiseHandshakeParityTest {
         freshInitiator().use { s ->
             assertTrue(s.needsWrite())
             assertEquals(handshake("msg1_hex"), s.writeHandshakeMessage().toHex())
-            assertTrue(s.readHandshakeMessage(handshake("msg2_hex").hex()).isEmpty())
+            assertTrue(s.readHandshakeMessage(handshake("msg2_hex").hexToBytes()).isEmpty())
             assertTrue(s.isHandshakeComplete())
             assertTrue(!s.needsWrite())
         }
@@ -67,7 +69,7 @@ class NoiseHandshakeParityTest {
     fun transportCiphertextsMatchInBothDirections() {
         freshInitiator().use { s ->
             s.writeHandshakeMessage()
-            s.readHandshakeMessage(handshake("msg2_hex").hex())
+            s.readHandshakeMessage(handshake("msg2_hex").hexToBytes())
 
             val transport = fx.getJSONObject("transport")
             val p2p = transport.getJSONArray("phone_to_pc")
@@ -76,7 +78,7 @@ class NoiseHandshakeParityTest {
                 assertEquals(
                     "phone_to_pc[$i]",
                     c.getString("ciphertext_hex"),
-                    s.encrypt(c.getString("plaintext_hex").hex()).toHex(),
+                    s.encrypt(c.getString("plaintext_hex").hexToBytes()).toHex(),
                 )
             }
             val c2p = transport.getJSONArray("pc_to_phone")
@@ -84,8 +86,8 @@ class NoiseHandshakeParityTest {
                 val c = c2p.getJSONObject(i)
                 assertArrayEquals(
                     "pc_to_phone[$i]",
-                    c.getString("plaintext_hex").hex(),
-                    s.decrypt(c.getString("ciphertext_hex").hex()),
+                    c.getString("plaintext_hex").hexToBytes(),
+                    s.decrypt(c.getString("ciphertext_hex").hexToBytes()),
                 )
             }
         }
@@ -93,10 +95,10 @@ class NoiseHandshakeParityTest {
 
     @Test
     fun wrongPcStaticFailsHandshakeGeneric() {
-        freshInitiator(reject("wrong_pc_public_hex").hex()).use { s ->
+        freshInitiator(reject("wrong_pc_public_hex").hexToBytes()).use { s ->
             s.writeHandshakeMessage()
             assertThrows(SessionException.HandshakeFailed::class.java) {
-                s.readHandshakeMessage(handshake("msg2_hex").hex())
+                s.readHandshakeMessage(handshake("msg2_hex").hexToBytes())
             }
         }
     }
@@ -105,17 +107,10 @@ class NoiseHandshakeParityTest {
     fun tamperedTransportMessageIsSessionEnded() {
         freshInitiator().use { s ->
             s.writeHandshakeMessage()
-            s.readHandshakeMessage(handshake("msg2_hex").hex())
+            s.readHandshakeMessage(handshake("msg2_hex").hexToBytes())
             assertThrows(SessionException.SessionEnded::class.java) {
-                s.decrypt(reject("tampered_pc_to_phone_ciphertext_hex").hex())
+                s.decrypt(reject("tampered_pc_to_phone_ciphertext_hex").hexToBytes())
             }
         }
     }
-
-    private fun String.hex(): ByteArray {
-        require(length % 2 == 0)
-        return ByteArray(length / 2) { substring(it * 2, it * 2 + 2).toInt(16).toByte() }
-    }
-
-    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 }
