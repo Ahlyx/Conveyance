@@ -56,17 +56,23 @@ class UniffiSealedIdentityCrypto @Inject constructor() : SealedIdentityCrypto {
         }
 }
 
-/** Wraps the generated UniFFI object so callers never see `uniffi.*`. */
-private class RustUnlockedIdentity(
-    private val inner: FfiUnlockedIdentity,
+/**
+ * Wraps the generated UniFFI object so callers never see `uniffi.*`.
+ *
+ * `internal`, not `private`, so [com.ahlyxlabs.conveyance.session] can
+ * unwrap [ffi] to start a Noise handshake through the same Rust handle
+ * (the X25519 static stays in native memory — see `sealed.rs`).
+ */
+internal class RustUnlockedIdentity(
+    internal val ffi: FfiUnlockedIdentity,
 ) : UnlockedIdentity {
 
-    override fun ed25519PublicKey(): Ed25519PublicKey = Ed25519PublicKey(inner.ed25519Public())
+    override fun ed25519PublicKey(): Ed25519PublicKey = Ed25519PublicKey(ffi.ed25519Public())
 
-    override fun x25519PublicKey(): X25519PublicKey = X25519PublicKey(inner.x25519Public())
+    override fun x25519PublicKey(): X25519PublicKey = X25519PublicKey(ffi.x25519Public())
 
-    override fun sign(message: ByteArray): Ed25519Signature = Ed25519Signature(inner.sign(message))
+    override fun sign(message: ByteArray): Ed25519Signature = Ed25519Signature(ffi.sign(message))
 
     /** Drops the Rust object; its `Zeroizing` secret buffer is wiped. */
-    override fun close() = inner.close()
+    override fun close() = ffi.close()
 }
