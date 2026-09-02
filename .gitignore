@@ -32,3 +32,6 @@ ENGINEERING-GUARDRAILS.md
 # Signing material never belongs in git.
 *.jks
 *.keystore
+
+# Phase exit reports: useful locally, kept out of the public history.
+PHASE_*_EXIT*.md
