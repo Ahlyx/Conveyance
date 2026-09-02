@@ -199,6 +199,8 @@ jobs:
               sys.exit(f"expected >= 30 instrumented tests, saw {total}")
           required = [
               "com.ahlyxlabs.conveyance.crypto.CryptoFixtureParityTest",
+              "com.ahlyxlabs.conveyance.session.NoiseHandshakeParityTest",
+              "com.ahlyxlabs.conveyance.session.NoiseSessionRoundTripTest",
               "com.ahlyxlabs.conveyance.storage.keystore.KeystoreKeysTest",
               "com.ahlyxlabs.conveyance.storage.identity.IdentityVaultTest",
               "com.ahlyxlabs.conveyance.storage.credentials.CredentialStoreTest",

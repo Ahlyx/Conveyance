@@ -194,6 +194,30 @@ pub fn noise_initiate_with_fixed_ephemeral(
     Ok(NoiseSession::new(hs))
 }
 
+/// **Test-vectors build only.** A KK **responder** — the role the PC
+/// daemon plays. The phone never takes it in production; this exists so
+/// an instrumented test can stand up a full two-party session over an
+/// in-memory link and exercise both directions of transport through the
+/// real `.so`. Random ephemeral (no fixed-key hazard), raw statics.
+#[cfg(feature = "test-vectors")]
+#[uniffi::export]
+pub fn noise_respond(
+    pc_x25519_secret: Vec<u8>,
+    phone_static_pub: Vec<u8>,
+) -> Result<Arc<NoiseSession>, NoiseFfiError> {
+    eprintln!(
+        "conveyance WARN: noise_respond called — the phone is never the KK responder. \
+         This must only ever appear in a test-vectors build."
+    );
+    let secret: [u8; 32] =
+        crate::fixed(pc_x25519_secret).map_err(|_| NoiseFfiError::BadKeyBytes)?;
+    let phone_pub: [u8; 32] =
+        crate::fixed(phone_static_pub).map_err(|_| NoiseFfiError::BadKeyBytes)?;
+    let local = Secret::from_bytes(secret);
+    let hs = SessionHandshake::new(Role::Responder, &local, &phone_pub).map_err(map_noise_err)?;
+    Ok(NoiseSession::new(hs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,6 +227,30 @@ mod tests {
     fn responder(pc_secret: [u8; 32], phone_pub: [u8; 32]) -> Arc<NoiseSession> {
         let local = Secret::from_bytes(pc_secret);
         NoiseSession::new(SessionHandshake::new(Role::Responder, &local, &phone_pub).unwrap())
+    }
+
+    #[cfg(feature = "test-vectors")]
+    #[test]
+    fn test_vector_entrypoints_drive_a_full_session() {
+        let phone_s = [4u8; 32];
+        let pc_s = [6u8; 32];
+        let eph = [8u8; 32];
+
+        let init = noise_initiate_with_fixed_ephemeral(
+            phone_s.to_vec(),
+            dh_pub(&pc_s).to_vec(),
+            eph.to_vec(),
+        )
+        .unwrap();
+        let resp = noise_respond(pc_s.to_vec(), dh_pub(&phone_s).to_vec()).unwrap();
+
+        let m1 = init.write_handshake_message(vec![]).unwrap();
+        resp.read_handshake_message(m1).unwrap();
+        let m2 = resp.write_handshake_message(vec![]).unwrap();
+        init.read_handshake_message(m2).unwrap();
+
+        let ct = init.encrypt(b"round trip".to_vec()).unwrap();
+        assert_eq!(resp.decrypt(ct).unwrap(), b"round trip");
     }
 
     fn dh_pub(secret: &[u8; 32]) -> [u8; 32] {

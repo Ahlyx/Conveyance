@@ -2,6 +2,7 @@ package com.ahlyxlabs.conveyance.session
 
 import uniffi.conveyance_crypto_ffi.NoiseFfiException
 import uniffi.conveyance_crypto_ffi.noiseInitiateWithFixedEphemeral
+import uniffi.conveyance_crypto_ffi.noiseRespond
 
 /**
  * DEBUG-ONLY. Starts a Noise KK **initiator** with a caller-supplied
@@ -26,6 +27,18 @@ object NoiseTestVectors {
             RustNoiseSession(
                 noiseInitiateWithFixedEphemeral(phoneStaticSecret, pcStaticPublic, ephemeral),
             )
+        } catch (e: NoiseFfiException) {
+            throw mapNoiseFfi(e)
+        }
+
+    /**
+     * A KK **responder** — the role the PC daemon plays. For an
+     * instrumented two-party round-trip over an in-memory link; the
+     * phone never takes this role in production. Random ephemeral.
+     */
+    fun respond(pcStaticSecret: ByteArray, phoneStaticPublic: ByteArray): NoiseSession =
+        try {
+            RustNoiseSession(noiseRespond(pcStaticSecret, phoneStaticPublic))
         } catch (e: NoiseFfiException) {
             throw mapNoiseFfi(e)
         }
