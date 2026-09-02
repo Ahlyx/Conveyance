@@ -52,7 +52,12 @@ class BleActor(
     val state: StateFlow<ConnectionStateMachine.State> = _state.asStateFlow()
 
     // -- outbound / inbound (used once LinkReady) ---------------------------
-    private val linkEvents = Channel<LinkEvent>(Channel.BUFFERED)
+    // UNLIMITED, not BUFFERED: onInboundBytes trySends from a binder
+    // thread that must neither block nor silently drop a chunk (a lost
+    // chunk desynchronises the consumer's Framer). The real backpressure
+    // is the InboundAssembler's 128 KiB cap on the consumer side; a
+    // sustained flood beyond that ends the session there.
+    private val linkEvents = Channel<LinkEvent>(Channel.UNLIMITED)
     private val notifyResults = Channel<Boolean>(Channel.CONFLATED)
     private val sendMutex = Mutex()
     private var currentMaxWriteLen = Frame.maxFramePayload(Frame.MIN_ATT_MTU)
