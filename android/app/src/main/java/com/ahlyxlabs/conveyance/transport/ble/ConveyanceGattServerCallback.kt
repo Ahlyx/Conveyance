@@ -13,14 +13,15 @@ import com.ahlyxlabs.conveyance.transport.ConnectionStateMachine
  * threads — into [BleActor] events. Every method does the minimum here
  * and hands off; no connection state lives in this class.
  *
- * [handle] is a supplier because the server handle only exists after
- * `openGattServer` returns, which is after this callback is constructed.
- * [deviceSink] receives the connected central (or null on disconnect) so
- * the real handle knows whom to notify / respond to.
+ * [handle] is safe to reference from the moment this callback is built:
+ * see [RealGattServerHandle]'s own doc comment for why it can exist
+ * before `openGattServer` returns. [deviceSink] receives the connected
+ * central (or null on disconnect) so the real handle knows whom to
+ * notify / respond to.
  */
 class ConveyanceGattServerCallback(
     private val actor: BleActor,
-    private val handle: () -> GattServerHandle?,
+    private val handle: GattServerHandle,
     private val deviceSink: (BluetoothDevice?) -> Unit = {},
 ) : BluetoothGattServerCallback() {
 
@@ -58,7 +59,7 @@ class ConveyanceGattServerCallback(
         // The central normally writes without response; the with-response
         // fallback still needs one or the write stalls.
         if (responseNeeded) {
-            handle()?.sendResponse(requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+            handle.sendResponse(requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
         }
     }
 
@@ -74,7 +75,7 @@ class ConveyanceGattServerCallback(
         // Respond FIRST: a late or missing descriptor response leaves the
         // central's write hanging. Only then interpret the CCCD change.
         if (responseNeeded) {
-            handle()?.sendResponse(requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+            handle.sendResponse(requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
         }
         val descriptorUuid = descriptor?.uuid ?: return
         val characteristicUuid = descriptor.characteristic?.uuid ?: return

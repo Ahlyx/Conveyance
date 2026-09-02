@@ -3,6 +3,7 @@ package com.ahlyxlabs.conveyance.transport.ble
 import android.Manifest
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothGattServer
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.content.Context
@@ -66,24 +67,32 @@ class BlePeripheral @Inject constructor(
             return false
         }
 
+        // handle is built before openGattServer() is called: the callback
+        // constructed from it may start receiving binder callbacks the
+        // instant openGattServer() returns, and must never find a handle
+        // that hasn't been wired yet (10.3b remediation finding #7).
+        // serverBox backs handle's server supplier, resolved just below;
+        // a plain local var wouldn't guarantee cross-thread visibility to
+        // a binder thread reading it before this method returns.
+        val serverBox = ServerBox()
+        val service = buildService()
         val newActor = BleActor(dispatcher, adapterWatch)
-        var handle: RealGattServerHandle? = null
+        val handle = RealGattServerHandle(
+            server = { serverBox.server },
+            notifyCharacteristic = service.getCharacteristic(ConveyanceGattProfile.PHONE_TO_PC_TX),
+        )
         val callback = ConveyanceGattServerCallback(
             actor = newActor,
-            handle = { handle },
-            deviceSink = { handle?.device = it },
+            handle = handle,
+            deviceSink = { handle.device = it },
         )
-        val server = runCatching { manager.openGattServer(context, callback) }.getOrNull()
+        serverBox.server = runCatching { manager.openGattServer(context, callback) }.getOrNull()
+        val server = serverBox.server
         if (server == null) {
             onUnavailable(BleUnavailable.AdapterOff)
             return false
         }
 
-        val service = buildService()
-        handle = RealGattServerHandle(
-            server,
-            service.getCharacteristic(ConveyanceGattProfile.PHONE_TO_PC_TX),
-        )
         val added = runCatching { server.addService(service) }.getOrDefault(false)
         if (!added) {
             server.close()
@@ -143,5 +152,10 @@ class BlePeripheral @Inject constructor(
         )
         service.addCharacteristic(notify)
         return service
+    }
+
+    /** A cross-thread-visible box for the [BluetoothGattServer] handle wiring; see [start]. */
+    private class ServerBox {
+        @Volatile var server: BluetoothGattServer? = null
     }
 }

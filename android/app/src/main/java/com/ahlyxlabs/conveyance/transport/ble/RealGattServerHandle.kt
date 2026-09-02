@@ -13,6 +13,14 @@ import androidx.annotation.RequiresPermission
 /**
  * [GattServerHandle] over a real `BluetoothGattServer`.
  *
+ * [server] is a supplier rather than a plain value: this handle is built
+ * *before* `BluetoothManager.openGattServer` is called, so that the
+ * `ConveyanceGattServerCallback` constructed from it — which the
+ * framework may start calling back the instant `openGattServer` returns
+ * — never references a handle that doesn't exist yet (10.3b remediation
+ * finding #7). The caller resolves the supplier once `openGattServer`
+ * returns; every operation here is a no-op until then.
+ *
  * The connected central is set by [ConveyanceGattServerCallback] via its
  * `deviceSink` — every operation needs the `BluetoothDevice`, and it is
  * only known once a connection lands.
@@ -22,7 +30,7 @@ import androidx.annotation.RequiresPermission
  * is the only place `@Suppress("DEPRECATION")` appears.
  */
 class RealGattServerHandle(
-    private val server: BluetoothGattServer,
+    private val server: () -> BluetoothGattServer?,
     private val notifyCharacteristic: BluetoothGattCharacteristic,
 ) : GattServerHandle {
 
@@ -31,15 +39,16 @@ class RealGattServerHandle(
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     override fun notify(value: ByteArray): Boolean {
+        val srv = server() ?: return false
         val target = device ?: return false
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                notifyApi33(target, value)
+                notifyApi33(srv, target, value)
             } else {
                 @Suppress("DEPRECATION")
                 run {
                     notifyCharacteristic.value = value
-                    server.notifyCharacteristicChanged(target, notifyCharacteristic, false)
+                    srv.notifyCharacteristicChanged(target, notifyCharacteristic, false)
                 }
             }
         } catch (_: SecurityException) {
@@ -49,15 +58,16 @@ class RealGattServerHandle(
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-    private fun notifyApi33(target: BluetoothDevice, value: ByteArray): Boolean =
-        server.notifyCharacteristicChanged(target, notifyCharacteristic, false, value) ==
+    private fun notifyApi33(srv: BluetoothGattServer, target: BluetoothDevice, value: ByteArray): Boolean =
+        srv.notifyCharacteristicChanged(target, notifyCharacteristic, false, value) ==
             BluetoothStatusCodes.SUCCESS
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     override fun sendResponse(requestId: Int, status: Int, offset: Int, value: ByteArray?) {
+        val srv = server() ?: return
         val target = device ?: return
         try {
-            server.sendResponse(target, requestId, status, offset, value)
+            srv.sendResponse(target, requestId, status, offset, value)
         } catch (_: SecurityException) {
             // Permission revoked mid-session; the connection is already doomed.
         }
@@ -65,9 +75,10 @@ class RealGattServerHandle(
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     override fun close() {
+        val srv = server() ?: return
         try {
-            device?.let { server.cancelConnection(it) }
-            server.close()
+            device?.let { srv.cancelConnection(it) }
+            srv.close()
         } catch (_: SecurityException) {
             // ignore
         } finally {
