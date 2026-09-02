@@ -68,11 +68,13 @@ impl SessionHandshake {
     }
 
     pub fn write_message(&mut self, payload: &[u8]) -> Result<Vec<u8>, ConveyanceError> {
-        self.inner.write_message(payload)
+        self.inner
+            .write_message(payload)
+            .map_err(ConveyanceError::from)
     }
 
     pub fn read_message(&mut self, msg: &[u8]) -> Result<Vec<u8>, ConveyanceError> {
-        self.inner.read_message(msg)
+        self.inner.read_message(msg).map_err(ConveyanceError::from)
     }
 
     pub fn is_finished(&self) -> bool {
@@ -146,7 +148,7 @@ impl Session {
     pub fn send(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, ConveyanceError> {
         self.require_active()?;
         let transport = self.transport.as_mut().ok_or(ConveyanceError::NoSession)?;
-        transport.send(plaintext)
+        transport.send(plaintext).map_err(ConveyanceError::from)
     }
 
     pub fn receive(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, ConveyanceError> {

@@ -1,0 +1,22 @@
+[package]
+name = "conveyance-noise"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Conveyance session handshake: a thin wrapper over snow for the fixed pattern Noise_KK_25519_ChaChaPoly_BLAKE2s. Pure-Rust, no I/O — extracted from conveyance-core (phase 10.4) so the Android side can drive the same snow through UniFFI."
+
+[dependencies]
+conveyance-crypto = { path = "../conveyance-crypto" }
+snow.workspace = true
+thiserror.workspace = true
+
+[features]
+# Exposes a fixed-ephemeral handshake constructor for cross-implementation
+# test vectors (the noise_fixtures.json emitter and the Android instrumented
+# parity suite). Default OFF. A predictable ephemeral kills forward secrecy,
+# so a top-of-crate compile guard (see lib.rs) refuses to build this with
+# optimizations / debug_assertions off — it may only reach a debug build.
+test-vectors = []
+
+[dev-dependencies]
+conveyance-crypto = { path = "../conveyance-crypto", features = ["test-support"] }

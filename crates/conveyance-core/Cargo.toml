@@ -15,6 +15,10 @@ conveyance-crypto = { path = "../conveyance-crypto" }
 # source of truth to drift-gate against; re-exported below as
 # `conveyance_core::wire::framing`, so PC-side call sites are unchanged.
 conveyance-wire = { path = "../conveyance-wire" }
+# Noise_KK handshake wrapper. Extracted (phase 10.4) so the Android side
+# drives the same `snow` through UniFFI; re-exported as
+# `conveyance_core::session::noise`, so the daemon is unchanged.
+conveyance-noise = { path = "../conveyance-noise" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
@@ -29,7 +33,6 @@ zeroize.workspace = true
 rusqlite.workspace = true
 keyring.workspace = true
 tokio.workspace = true
-snow.workspace = true
 ciborium.workspace = true
 qrcode.workspace = true
 base64.workspace = true
