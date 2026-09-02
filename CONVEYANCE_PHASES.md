@@ -871,6 +871,19 @@ multi-frame message over ATT; `onNotificationSent` latency vs the 2 s
 under a live connection, CCCD cleared by a real central; advertiser
 `onStartSuccess` on real hardware; nRF Connect as an interim central.
 
+**BLE items carried from the 10.3b remediation pass** (findings #9, #10
+— deferred, not fixed, per the remediation triage): `preparedWrite`
+(Android's reliable/queued-write mechanism) is unhandled in
+`ConveyanceGattServerCallback.onCharacteristicWriteRequest` — btleplug
+and the emulator never exercise it, so it's unverified whether any real
+central needs it. `RealGattServerHandle.notify`/`sendResponse`/`close`
+catch only `SecurityException`; other `RuntimeException`s a real BLE
+stack can throw (e.g. `IllegalStateException` from a dead Bluetooth
+binder) propagate past `PhoneLink.send`'s documented
+"only throws `LinkClosedException`" contract — real hardware testing
+will show which exception classes actually appear before broadening the
+catch is worth doing blind.
+
 **Prompt.**
 
 ```

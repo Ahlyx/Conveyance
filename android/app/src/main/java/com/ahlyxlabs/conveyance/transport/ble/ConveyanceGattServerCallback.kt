@@ -70,6 +70,17 @@ class ConveyanceGattServerCallback(
         offset: Int,
         value: ByteArray?,
     ) {
+        // preparedWrite (Android's reliable/queued-write mechanism —
+        // preparedWrite=true writes queued for a later
+        // executeReliableWrite/cancel) is not handled: onExecuteWriteRequest
+        // is never overridden, so a queued write would be pushed into the
+        // Framer's byte stream as if complete (corrupting framing) and the
+        // central's execute-write request would never get a GATT response.
+        // Deferred (10.3b remediation finding #9, tracked in
+        // CONVEYANCE_PHASES.md's Phase 11 BLE carry-over): btleplug, the
+        // real PC-side central, doesn't use reliable writes, and the
+        // emulator doesn't exercise them either. Handle this if Phase 11
+        // hardware testing with a different central ever needs it.
         val charUuid = characteristic?.uuid
         if (charUuid != null && ConveyanceGattProfile.isInboundWrite(charUuid) && value != null) {
             // Copy: the framework reuses this buffer.
