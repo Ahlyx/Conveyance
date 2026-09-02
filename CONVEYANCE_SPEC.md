@@ -338,6 +338,16 @@ or user cancellation before completion -- returns to NO_SESSION, not
 ENDED. A session that never completed its handshake never existed;
 ENDED implies a lifecycle that reached at least ACTIVE.
 
+Because the abort target is NO_SESSION and not ENDED, an aborted or
+failed session start logs **no** session-end row on either side. It is
+surfaced to the user as a start error (`HandshakeFailed`,
+`PhoneUnreachable`, or cancellation), never as a session-end event. Only
+a transition into ENDED -- which is reachable only from ACTIVE or
+IDLE_WARNING -- produces the session-end log row described under
+"Session end". After an abort, a fresh start attempt with the same
+identity MUST proceed cleanly from NO_SESSION; no state persists from the
+failed attempt.
+
 ### Timers
 
 | Timer | Default | Minimum | Maximum | Behavior on expiry |
@@ -427,6 +437,8 @@ Sessions end via:
 
 On end, the daemon MUST zeroize Noise session keys in memory. Both sides
 log the session-end event to their respective databases with the reason.
+This applies only to a session that reached ACTIVE; an aborted handshake
+logs no session-end row (see "Session lifecycle").
 
 ### Kill switch
 
