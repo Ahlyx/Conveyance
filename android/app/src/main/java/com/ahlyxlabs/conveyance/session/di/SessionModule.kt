@@ -9,8 +9,9 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 /**
- * Session-layer DI. Grows in 10.4b with `@SessionDispatcher` and the
- * `PhoneSession` factory; for now it binds the Noise bridge.
+ * Session-layer DI: binds the Noise bridge. `@SessionDispatcher` is
+ * provided by [SessionDispatcherModule]; `PhoneSessionFactory` is
+ * `@Inject`-constructed, so neither needs a binding here.
  *
  * Singleton because the implementation is stateless (each session is its
  * own `NoiseSession` handle) and the native library loads once.

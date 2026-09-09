@@ -24,4 +24,13 @@ sealed class SessionException(message: String) : Exception(message) {
 
     /** A [NoiseSession] method was called in the wrong phase — a caller bug. */
     class WrongPhase(detail: String) : SessionException(detail)
+
+    /**
+     * A `PhoneSession` operation that needs a live session was attempted with
+     * none ACTIVE (never started, still handshaking, or already ended). This
+     * is the phone-side cold-start gate — the counterpart of the daemon's
+     * `conveyance/no_session`. Retryable: the user starts a session and tries
+     * again.
+     */
+    class NotActive : SessionException("no active Conveyance session")
 }

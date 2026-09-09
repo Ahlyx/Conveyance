@@ -15,6 +15,7 @@ __pycache__/
 
 # Personal standing instructions (not project-specific)
 ENGINEERING-GUARDRAILS.md
+AGENTS.md
 
 # ---- Android / Gradle (phase 10) ----
 /android/.gradle/
@@ -38,3 +39,4 @@ ENGINEERING-GUARDRAILS.md
 
 # Phase exit reports: useful locally, kept out of the public history.
 PHASE_*_EXIT*.md
+AUDIT_PRE_PHASE_10.md

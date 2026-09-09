@@ -158,11 +158,15 @@ jobs:
               classes.add(r.get("name", ""))
           print(f"JVM unit tests: {total}, failures+errors: {bad}")
           print("classes:", ", ".join(sorted(classes)))
-          if total < 35:
-              sys.exit(f"expected >= 35 JVM unit tests, saw {total}")
+          if total < 130:
+              sys.exit(f"expected >= 130 JVM unit tests, saw {total}")
           required = [
               "com.ahlyxlabs.conveyance.transport.framing.FramingFixtureParityTest",
               "com.ahlyxlabs.conveyance.transport.framing.FramerTest",
+              "com.ahlyxlabs.conveyance.session.PhoneSessionTest",
+              "com.ahlyxlabs.conveyance.session.SessionParamsTest",
+              "com.ahlyxlabs.conveyance.session.SessionStateMachineTest",
+              "com.ahlyxlabs.conveyance.session.SessionTimersTest",
           ]
           missing = [c for c in required if c not in classes]
           if missing:
@@ -201,6 +205,7 @@ jobs:
               "com.ahlyxlabs.conveyance.crypto.CryptoFixtureParityTest",
               "com.ahlyxlabs.conveyance.session.NoiseHandshakeParityTest",
               "com.ahlyxlabs.conveyance.session.NoiseSessionRoundTripTest",
+              "com.ahlyxlabs.conveyance.session.PhoneSessionRealNoiseTest",
               "com.ahlyxlabs.conveyance.storage.keystore.KeystoreKeysTest",
               "com.ahlyxlabs.conveyance.storage.identity.IdentityVaultTest",
               "com.ahlyxlabs.conveyance.storage.credentials.CredentialStoreTest",
