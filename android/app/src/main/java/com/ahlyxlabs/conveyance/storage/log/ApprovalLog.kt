@@ -1,11 +1,13 @@
 package com.ahlyxlabs.conveyance.storage.log
 
+import com.ahlyxlabs.conveyance.approval.ApprovalDestination
 import com.ahlyxlabs.conveyance.crypto.ChainRow
 import com.ahlyxlabs.conveyance.crypto.ChainVerification
 import com.ahlyxlabs.conveyance.crypto.ConveyanceCrypto
 import com.ahlyxlabs.conveyance.crypto.LogEvent
 import com.ahlyxlabs.conveyance.crypto.SigningContext
 import com.ahlyxlabs.conveyance.crypto.UnlockedIdentity
+import androidx.room.withTransaction
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
@@ -24,9 +26,10 @@ import org.json.JSONObject
  */
 @Singleton
 class ApprovalLog @Inject constructor(
-    private val dao: LogDao,
+    private val database: ApprovalDatabase,
     private val crypto: ConveyanceCrypto,
 ) {
+    private val dao get() = database.logDao()
     private val writeLock = Mutex()
 
     /** Append one event; returns the new chain-head hash. */
@@ -36,6 +39,36 @@ class ApprovalLog @Inject constructor(
         payloadJson: String,
         timestamp: Long,
     ): ByteArray = writeLock.withLock {
+        database.withTransaction {
+            appendUnlocked(reqId, eventType, payloadJson, timestamp)
+        }
+    }
+
+    /**
+     * Stage the terminal row, run a final synchronous authorization/signing
+     * hook, and commit the append atomically. If the hook rejects because the
+     * deadline/session changed, Room rolls the row back. The callback must not
+     * suspend: the approval's final deadline check must be adjacent to signing.
+     */
+    suspend fun <T> appendWithBeforeCommit(
+        reqId: ByteArray,
+        eventType: String,
+        payloadJson: String,
+        timestamp: Long,
+        beforeCommit: () -> T,
+    ): T = writeLock.withLock {
+        database.withTransaction {
+            appendUnlocked(reqId, eventType, payloadJson, timestamp)
+            beforeCommit()
+        }
+    }
+
+    private suspend fun appendUnlocked(
+        reqId: ByteArray,
+        eventType: String,
+        payloadJson: String,
+        timestamp: Long,
+    ): ByteArray {
         val prev = dao.lastHash() ?: crypto.genesisPrevHash()
         val event = LogEvent(reqId, eventType, payloadJson, timestamp)
         val hash = crypto.rowHash(prev, event)
@@ -49,10 +82,26 @@ class ApprovalLog @Inject constructor(
                 hash = hash,
             ),
         )
-        hash
+        return hash
     }
 
     suspend fun count(): Int = dao.count()
+
+    /**
+     * Exact `(service, endpoint)` pairs from the last successful approvals,
+     * newest first. The caller applies the protocol's 30-row policy window.
+     * Malformed old payloads are omitted, which can only make a destination
+     * novel and require stronger authentication.
+     */
+    suspend fun successfulDestinationsNewestFirst(limit: Int): List<ApprovalDestination> =
+        dao.latestByEventType(EVENT_APPROVAL_GRANTED, limit).mapNotNull { row ->
+            runCatching {
+                val json = JSONObject(row.payloadJson)
+                val service = json.opt("service") as? String ?: return@mapNotNull null
+                val endpoint = json.opt("endpoint") as? String ?: return@mapNotNull null
+                ApprovalDestination(service, endpoint)
+            }.getOrNull()
+        }
 
     /** Walk the whole chain. */
     suspend fun verify(): ChainVerification =
@@ -88,4 +137,8 @@ class ApprovalLog @Inject constructor(
         }
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+
+    private companion object {
+        const val EVENT_APPROVAL_GRANTED = "approval_granted"
+    }
 }

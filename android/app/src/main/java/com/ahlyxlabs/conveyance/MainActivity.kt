@@ -8,6 +8,7 @@ import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -45,6 +46,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
+import com.ahlyxlabs.conveyance.approval.ApprovalSessionHost
+import com.ahlyxlabs.conveyance.approval.ApprovalViewModel
 import com.ahlyxlabs.conveyance.crypto.ConveyanceCrypto
 import com.ahlyxlabs.conveyance.crypto.RecoveryPhrase
 import com.ahlyxlabs.conveyance.pairing.PairingCoordinator
@@ -58,6 +61,7 @@ import com.ahlyxlabs.conveyance.storage.keystore.BiometricAuthException
 import com.ahlyxlabs.conveyance.storage.keystore.BiometricGate
 import com.ahlyxlabs.conveyance.storage.pairings.PairingEntity
 import com.ahlyxlabs.conveyance.storage.pairings.PairingStore
+import com.ahlyxlabs.conveyance.session.PhoneSession
 import com.ahlyxlabs.conveyance.transport.ble.BlePermissions
 import com.ahlyxlabs.conveyance.ui.theme.ConveyanceTheme
 import com.journeyapps.barcodescanner.ScanContract
@@ -75,6 +79,8 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var pairingStore: PairingStore
     @Inject lateinit var pairingCoordinator: PairingCoordinator
     @Inject lateinit var blePermissions: BlePermissions
+
+    private val approvalViewModel: ApprovalViewModel by viewModels()
 
     private var screen by mutableStateOf<AppScreen>(AppScreen.Loading)
     private val savedPairings = mutableStateListOf<PairingEntity>()
@@ -128,6 +134,10 @@ class MainActivity : FragmentActivity() {
             ConveyanceTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { insets ->
                     Surface(modifier = Modifier.padding(insets)) {
+                        ApprovalSessionHost(
+                            viewModel = approvalViewModel,
+                            biometricGate = biometricGate,
+                        ) {
                         when (val current = screen) {
                             AppScreen.Loading -> StatusScreen("Loading Conveyance…")
                             AppScreen.Home -> HomeScreen(
@@ -178,11 +188,15 @@ class MainActivity : FragmentActivity() {
                                 onDone = { screen = AppScreen.Home },
                             )
                         }
+                        }
                     }
                 }
             }
         }
     }
+
+    /** Narrow hook for the authenticated-session owner; 10.9 owns session lifecycle. */
+    fun attachActiveApprovalSession(session: PhoneSession): Boolean = approvalViewModel.attach(session)
 
     private fun beginIdentitySetup() {
         try {

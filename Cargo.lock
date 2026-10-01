@@ -811,6 +811,7 @@ dependencies = [
  "conveyance-crypto",
  "conveyance-noise",
  "conveyance-pairing",
+ "conveyance-protocol",
  "conveyance-wire",
  "dirs",
  "futures-lite",
@@ -853,6 +854,7 @@ dependencies = [
  "conveyance-crypto",
  "conveyance-noise",
  "conveyance-pairing",
+ "conveyance-protocol",
  "serde_json",
  "thiserror 2.0.20",
  "uniffi",
@@ -893,6 +895,20 @@ dependencies = [
  "qrcode",
  "serde",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "conveyance-protocol"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "conveyance-crypto",
+ "conveyance-pairing",
+ "conveyance-wire",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "toml 0.8.23",
 ]
 
 [[package]]

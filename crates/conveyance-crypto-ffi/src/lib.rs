@@ -37,6 +37,7 @@
 uniffi::setup_scaffolding!();
 
 pub mod aead;
+pub mod approval;
 pub mod canonical;
 pub mod hashchain;
 pub mod hkdf;

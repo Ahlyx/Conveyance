@@ -78,7 +78,7 @@ class PhoneSessionRealNoiseTest {
             val pcToPhone = ByteArray(83) { (255 - it * 11).toByte() }
             val inbound = async { h.session.inbound.first() }
             h.pc.sendPlaintext(pcToPhone)
-            assertArrayEquals(pcToPhone, withTimeout(TEST_TIMEOUT_MS) { inbound.await() })
+            assertArrayEquals(pcToPhone, withTimeout(TEST_TIMEOUT_MS) { inbound.await().bytes })
             assertTrue(h.pc.pcTransportFrames.get() > 1)
 
             h.session.endNow(EndReason.UserEnded)

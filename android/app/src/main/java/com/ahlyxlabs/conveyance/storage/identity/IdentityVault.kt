@@ -133,6 +133,60 @@ class IdentityVault @Inject constructor(
     }
 
     /**
+     * Re-authenticate the selected Tier 1 method without opening, replacing,
+     * or closing the active session. Used for Tier 3 approval only. The
+     * freshly unwrapped key must match the active session's vault key and
+     * envelope generation; method changes or stale sessions fail closed.
+     */
+    suspend fun reauthenticate(
+        session: UnlockedPhoneSession,
+        input: Tier1AuthInput,
+    ): Result<Unit> {
+        try {
+            vaultMutex.withLock {
+                session.requireOpen()
+                val container = readContainer()
+                val configuredMethod = container.authMethod ?: Tier1AuthMethod.BIOMETRIC
+                if (configuredMethod != session.authMethod) throw AuthMethodMismatchException()
+
+                val currentGeneration = container.generation
+                    ?: throw IdentityCorruptException("versioned identity generation is missing")
+                val sessionGeneration = session.generation
+                val expectedVaultKey = session.vaultKeyCopy()
+                try {
+                    if (!MessageDigest.isEqual(sessionGeneration, currentGeneration)) {
+                        throw IdentitySessionMismatchException()
+                    }
+                    val authenticatedVaultKey = tier1Envelope.unwrap(
+                        container,
+                        input,
+                        AuthPurpose.HIGH_RISK_APPROVAL,
+                    )
+                    try {
+                        session.requireOpen()
+                        if (!MessageDigest.isEqual(expectedVaultKey, authenticatedVaultKey)) {
+                            throw IdentitySessionMismatchException()
+                        }
+                    } finally {
+                        authenticatedVaultKey.fill(0)
+                    }
+                } finally {
+                    sessionGeneration.fill(0)
+                    currentGeneration.fill(0)
+                    expectedVaultKey.fill(0)
+                }
+            }
+            return Result.success(Unit)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            return Result.failure(error)
+        } finally {
+            input.close()
+        }
+    }
+
+    /**
      * Change Tier 1 protection after authenticating the current method.
      * Credential DEKs stay wrapped under the same vault key and therefore
      * need no rewrite for a v2-to-v2 method change.

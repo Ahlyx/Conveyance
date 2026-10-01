@@ -6,6 +6,7 @@ members = [
     "crates/conveyance-wire",
     "crates/conveyance-noise",
     "crates/conveyance-pairing",
+    "crates/conveyance-protocol",
     "crates/conveyance-core",
     "crates/conveyance-daemon",
     "crates/conveyance-shim",

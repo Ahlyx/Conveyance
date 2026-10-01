@@ -19,7 +19,16 @@ class UnlockedPhoneSession internal constructor(
     private val generationBytes = generation.copyOf()
     private var closed = false
 
-    val generation: ByteArray get() = generationBytes.copyOf()
+    val generation: ByteArray
+        @Synchronized get() {
+            check(!closed) { "Tier 1 session is closed" }
+            return generationBytes.copyOf()
+        }
+
+    @Synchronized
+    internal fun requireOpen() {
+        check(!closed) { "Tier 1 session is closed" }
+    }
 
     @Synchronized
     internal fun <T> withVaultKey(block: (ByteArray) -> T): T {

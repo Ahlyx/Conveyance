@@ -20,6 +20,8 @@ conveyance-wire = { path = "../conveyance-wire" }
 # `conveyance_core::session::noise`, so the daemon is unchanged.
 conveyance-noise = { path = "../conveyance-noise" }
 conveyance-pairing = { path = "../conveyance-pairing", features = ["render"] }
+# Typed application messages and approval binding are shared with Android.
+conveyance-protocol = { path = "../conveyance-protocol" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true

@@ -18,4 +18,8 @@ interface LogDao {
 
     @Query("SELECT COUNT(*) FROM entries")
     suspend fun count(): Int
+
+    /** Newest successful approval rows only; denied/expired requests never affect novelty. */
+    @Query("SELECT * FROM entries WHERE event_type = :eventType ORDER BY id DESC LIMIT :limit")
+    suspend fun latestByEventType(eventType: String, limit: Int): List<LogEntryEntity>
 }

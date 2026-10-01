@@ -16,3 +16,7 @@ class IdentityInvalidatedException(cause: Throwable? = null) :
 /** `identity.enc` is missing, malformed, or will not decrypt. */
 class IdentityCorruptException(message: String, cause: Throwable? = null) :
     Exception(message, cause)
+
+/** The active Tier 1 session no longer matches the installed vault envelope. */
+class IdentitySessionMismatchException :
+    Exception("the active identity session no longer matches the vault")

@@ -19,6 +19,7 @@ on:
       - "crates/conveyance-wire/**"
       - "crates/conveyance-noise/**"
       - "crates/conveyance-pairing/**"
+      - "crates/conveyance-protocol/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -31,6 +32,7 @@ on:
       - "crates/conveyance-wire/**"
       - "crates/conveyance-noise/**"
       - "crates/conveyance-pairing/**"
+      - "crates/conveyance-protocol/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -107,6 +109,15 @@ jobs:
           git diff --exit-code -- android/app/src/androidTest/assets/noise_fixtures.json \
             || { echo "::error::noise_fixtures.json is stale; run the emitter and commit it"; exit 1; }
 
+      # Shared application protocol fixture: the Rust FFI emits canonical
+      # ApprovalRequest decode fields and deterministic signed response bytes.
+      - name: Regenerate approval protocol fixtures and check for drift
+        run: |
+          cargo run --locked -p conveyance-crypto-ffi --example emit_approval_fixtures -- \
+            android/app/src/androidTest/assets/approval_fixtures.json
+          git diff --exit-code -- android/app/src/androidTest/assets/approval_fixtures.json \
+            || { echo "::error::approval_fixtures.json is stale; run the emitter and commit it"; exit 1; }
+
       - uses: gradle/actions/setup-gradle@v4
 
       - run: chmod +x ./gradlew
@@ -163,6 +174,7 @@ jobs:
           if total < 130:
               sys.exit(f"expected >= 130 JVM unit tests, saw {total}")
           required = [
+              "com.ahlyxlabs.conveyance.approval.ApprovalStateMachineTest",
               "com.ahlyxlabs.conveyance.transport.framing.FramingFixtureParityTest",
               "com.ahlyxlabs.conveyance.transport.framing.FramerTest",
               "com.ahlyxlabs.conveyance.session.PhoneSessionTest",
@@ -204,7 +216,9 @@ jobs:
           if total < 30:
               sys.exit(f"expected >= 30 instrumented tests, saw {total}")
           required = [
+              "com.ahlyxlabs.conveyance.approval.ApprovalSurfaceTest",
               "com.ahlyxlabs.conveyance.crypto.CryptoFixtureParityTest",
+              "com.ahlyxlabs.conveyance.approval.ApprovalProtocolParityTest",
               "com.ahlyxlabs.conveyance.session.NoiseHandshakeParityTest",
               "com.ahlyxlabs.conveyance.session.NoiseSessionRoundTripTest",
               "com.ahlyxlabs.conveyance.session.PhoneSessionRealNoiseTest",
@@ -212,6 +226,7 @@ jobs:
               "com.ahlyxlabs.conveyance.storage.identity.IdentityVaultTest",
               "com.ahlyxlabs.conveyance.storage.credentials.CredentialStoreTest",
               "com.ahlyxlabs.conveyance.storage.log.ApprovalLogTest",
+              "com.ahlyxlabs.conveyance.approval.PhoneApprovalPolicyStoreTest",
               "com.ahlyxlabs.conveyance.storage.pairings.PairingStoreTest",
               "com.ahlyxlabs.conveyance.storage.StorageGraphTest",
           ]

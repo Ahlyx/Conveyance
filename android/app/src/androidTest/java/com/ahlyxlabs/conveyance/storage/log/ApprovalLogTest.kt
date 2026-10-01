@@ -16,6 +16,7 @@ import com.ahlyxlabs.conveyance.crypto.RecoveryPhrase
 import com.ahlyxlabs.conveyance.crypto.SigningContext
 import com.ahlyxlabs.conveyance.crypto.UniffiConveyanceCrypto
 import com.ahlyxlabs.conveyance.crypto.UniffiSealedIdentityCrypto
+import com.ahlyxlabs.conveyance.approval.ApprovalDestination
 import com.ahlyxlabs.conveyance.storage.db.SqlCipherFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -50,7 +51,7 @@ class ApprovalLogTest {
         db = Room.databaseBuilder(context, ApprovalDatabase::class.java, dbName)
             .openHelperFactory(SqlCipherFactory.create(passphrase.copyOf()))
             .build()
-        log = ApprovalLog(db.logDao(), crypto)
+        log = ApprovalLog(db, crypto)
     }
 
     @After
@@ -197,6 +198,69 @@ class ApprovalLogTest {
         assertNotEquals(0, crypto.genesisPrevHash().size)
     }
 
+    @Test
+    fun noveltyHistoryUsesOnlyRecentSuccessfulExactDestinations() = runBlocking {
+        log.append(ByteArray(16) { 1 }, "approval_granted",
+            """{"service":"svc","endpoint":"/v1/x/"}""", 10)
+        log.append(ByteArray(16) { 2 }, "approval_denied",
+            """{"service":"denied","endpoint":"/never"}""", 11)
+        log.append(ByteArray(16) { 3 }, "approval_expired",
+            """{"service":"expired","endpoint":"/never"}""", 12)
+        log.append(ByteArray(16) { 4 }, "approval_granted",
+            """{"service":"svc","endpoint":"/v1/y"}""", 13)
+        log.append(ByteArray(16) { 5 }, "approval_granted", "not json", 14)
+
+        assertEquals(
+            listOf(
+                ApprovalDestination("svc", "/v1/y"),
+                ApprovalDestination("svc", "/v1/x/"),
+            ),
+            log.successfulDestinationsNewestFirst(30),
+        )
+        assertEquals(
+            emptyList<ApprovalDestination>(),
+            log.successfulDestinationsNewestFirst(1),
+        )
+    }
+
+    @Test
+    fun terminalAppendHookRunsAfterStagingAndRollsBackIfFinalAuthorizationRejects() = runBlocking {
+        val signed = log.appendWithBeforeCommit(
+            reqId = ByteArray(16) { 9 },
+            eventType = "approval_granted",
+            payloadJson = "{\"decision\":\"approved\"}",
+            timestamp = 20,
+        ) {
+            assertEquals(1, rowCountSynchronously())
+            byteArrayOf(1, 2, 3)
+        }
+        assertEquals(listOf<Byte>(1, 2, 3), signed.toList())
+        assertEquals(1, log.count())
+
+        try {
+            log.appendWithBeforeCommit(
+                reqId = ByteArray(16) { 10 },
+                eventType = "approval_granted",
+                payloadJson = "{\"decision\":\"approved\"}",
+                timestamp = 21,
+            ) {
+                assertEquals(2, rowCountSynchronously())
+                throw IllegalStateException("deadline crossed before signing")
+            }
+            throw AssertionError("expected final authorization to reject")
+        } catch (expected: IllegalStateException) {
+            assertEquals("deadline crossed before signing", expected.message)
+        }
+        assertEquals(1, log.count())
+        assertTrue(log.verify() is ChainVerification.Intact)
+    }
+
     private fun String.hexToBytes(): ByteArray =
         ByteArray(length / 2) { substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+
+    private fun rowCountSynchronously(): Int =
+        db.openHelper.readableDatabase.query("SELECT COUNT(*) FROM entries").use { cursor ->
+            check(cursor.moveToFirst())
+            cursor.getInt(0)
+        }
 }
