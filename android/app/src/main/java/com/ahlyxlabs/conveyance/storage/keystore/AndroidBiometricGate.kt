@@ -54,8 +54,10 @@ class AndroidBiometricGate @Inject constructor(
             },
         )
         val title = when (purpose) {
-            AuthPurpose.UNLOCK_IDENTITY -> "Unlock Conveyance identity"
-            AuthPurpose.UNLOCK_CREDENTIAL -> "Unlock Conveyance credential"
+            AuthPurpose.SESSION_UNLOCK -> "Unlock Conveyance session"
+            AuthPurpose.CHANGE_AUTH_METHOD -> "Confirm protection change"
+            AuthPurpose.MIGRATE_IDENTITY -> "Protect the upgraded identity"
+            AuthPurpose.MIGRATE_CREDENTIAL -> "Migrate a stored credential"
             AuthPurpose.HIGH_RISK_APPROVAL -> "Confirm high-risk request"
         }
         val promptInfo = BiometricPrompt.PromptInfo.Builder()

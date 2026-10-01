@@ -10,15 +10,18 @@
 //! not).
 
 use crate::{CryptoFfiError, fixed, map_core_err};
+use zeroize::{Zeroize, Zeroizing};
 
 /// Derive a 32-byte DEK from `passphrase` and a 16-byte `salt` using the
 /// spec's fixed Argon2id parameters.
 #[uniffi::export]
 pub fn argon2id_derive_dek(passphrase: Vec<u8>, salt: Vec<u8>) -> Result<Vec<u8>, CryptoFfiError> {
+    let passphrase = Zeroizing::new(passphrase);
     let salt: [u8; conveyance_crypto::kdf::KDF_SALT_LEN] = fixed(salt)?;
-    conveyance_crypto::kdf::derive_dek(&passphrase, &salt)
-        .map(|dek| dek.to_vec())
-        .map_err(map_core_err)
+    let mut dek = conveyance_crypto::kdf::derive_dek(&passphrase, &salt).map_err(map_core_err)?;
+    let output = dek.to_vec();
+    dek.zeroize();
+    Ok(output)
 }
 
 #[cfg(test)]

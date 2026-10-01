@@ -24,6 +24,7 @@ conveyance-pairing = { path = "../conveyance-pairing" }
 # canonicalize path.
 serde_json.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
 # `cli` provides `uniffi::uniffi_bindgen_main` for the bin below. Library
 # mode (generate bindings from the compiled .so) needs no UDL file.
 uniffi = { workspace = true, features = ["cli"] }

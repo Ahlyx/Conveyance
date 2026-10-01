@@ -2,6 +2,8 @@ package com.ahlyxlabs.conveyance.storage.keystore
 
 import android.app.KeyguardManager
 import android.content.Context
+import androidx.biometric.BiometricManager
+import android.security.keystore.KeyProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.security.KeyStore
@@ -22,9 +24,8 @@ import org.junit.runner.RunWith
  * `KeyInfo.isInvalidatedByBiometricEnrollment` is set, which is what
  * causes that behaviour.
  *
- * `conveyance_tier1` needs a device secure lock screen to provision, so
- * the flag test is `assumeTrue`-guarded on `isDeviceSecure` and the CI
- * emulator sets a PIN before this runs.
+ * `conveyance.tier1.v2` needs an enrolled strong biometric to provision,
+ * so its flag test is guarded on actual biometric availability.
  */
 @RunWith(AndroidJUnit4::class)
 class KeystoreKeysTest {
@@ -38,18 +39,18 @@ class KeystoreKeysTest {
     @Before
     fun clearAliases() {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        for (alias in listOf(KeystoreKeys.TIER1_ALIAS, KeystoreKeys.DB_ALIAS)) {
+        for (alias in listOf(
+            KeystoreKeys.LEGACY_TIER1_ALIAS,
+            KeystoreKeys.TIER1_ALIAS,
+            KeystoreKeys.DB_ALIAS,
+        )) {
             if (ks.containsAlias(alias)) ks.deleteEntry(alias)
         }
     }
 
     @Test
     fun dbKeyProvisionsWithoutAuthAndWrapUnwrapRoundTrips() {
-        try {
-            keys.ensureProvisioned()
-        } catch (e: MissingLockScreenException) {
-            // db key is still created even when tier1 cannot be.
-        }
+        keys.ensureDbKey()
         val info = keys.dbKeyInfo()
         assertFalse("conveyance_db must not be user-auth-required", info.isUserAuthenticationRequired)
         assertEquals(256, info.keySize)
@@ -64,13 +65,26 @@ class KeystoreKeysTest {
 
     @Test
     fun tier1KeyCarriesTheSpecMandatedFlags() {
+        assumeTrue("device needs a secure lock screen", keyguard.isDeviceSecure)
         assumeTrue(
-            "device needs a secure lock screen to provision conveyance_tier1",
-            keyguard.isDeviceSecure,
+            "device needs an enrolled strong biometric for the biometric-only Tier 1 key",
+            BiometricManager.from(context).canAuthenticate(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG,
+            ) == BiometricManager.BIOMETRIC_SUCCESS,
         )
-        keys.ensureProvisioned()
+        keys.ensureTier1Key()
         val info = keys.tier1KeyInfo()
         assertTrue("Tier 1 must require user authentication", info.isUserAuthenticationRequired)
+        assertEquals(
+            "the biometric wrapper must not allow device-credential fallback",
+            KeyProperties.AUTH_BIOMETRIC_STRONG,
+            info.userAuthenticationType,
+        )
+        assertEquals(
+            "per-use auth is reported as -1 by KeyInfo",
+            -1,
+            info.userAuthenticationValidityDurationSeconds,
+        )
 
         // setInvalidatedByBiometricEnrollment(true) is in the provisioning
         // spec (KeystoreKeys.generateTier1Key), but KeyInfo only reports it
@@ -78,13 +92,7 @@ class KeystoreKeysTest {
         // emulator has a PIN and no fingerprint, so assert opportunistically
         // and log otherwise — real enrollment-change invalidation is Phase
         // 11 hardware territory.
-        if (!info.isInvalidatedByBiometricEnrollment) {
-            android.util.Log.w(
-                "KeystoreKeysTest",
-                "isInvalidatedByBiometricEnrollment reported false " +
-                    "(no biometric enrolled on this device); flag is set in the spec regardless",
-            )
-        }
+        assertTrue(info.isInvalidatedByBiometricEnrollment)
     }
 
     @Test
@@ -100,7 +108,30 @@ class KeystoreKeysTest {
     }
 
     @Test
+    fun newTier1ProvisioningUsesOnlyBiometricV2Alias() {
+        assumeTrue(
+            "device needs an enrolled strong biometric to provision Tier 1",
+            BiometricManager.from(context).canAuthenticate(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG,
+            ) == BiometricManager.BIOMETRIC_SUCCESS,
+        )
+        keys.ensureTier1Key()
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        assertTrue(store.containsAlias(KeystoreKeys.TIER1_ALIAS))
+        assertFalse(
+            "new provisioning must not recreate the v1 biometric wrapper",
+            store.containsAlias(KeystoreKeys.LEGACY_TIER1_ALIAS),
+        )
+    }
+
+    @Test
     fun ensureProvisionedIsIdempotent() {
+        assumeTrue(
+            "device needs an enrolled strong biometric to provision Tier 1",
+            BiometricManager.from(context).canAuthenticate(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG,
+            ) == BiometricManager.BIOMETRIC_SUCCESS,
+        )
         try {
             keys.ensureProvisioned()
             keys.ensureProvisioned()

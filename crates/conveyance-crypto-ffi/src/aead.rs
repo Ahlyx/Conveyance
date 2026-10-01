@@ -12,6 +12,7 @@
 
 use crate::{CryptoFfiError, fixed, map_core_err};
 use conveyance_crypto::aead::{AeadKey, Nonce};
+use zeroize::Zeroizing;
 
 /// Encrypt `plaintext` with associated data `aad`. Output is
 /// `ciphertext || tag`.
@@ -22,10 +23,11 @@ pub fn chacha20poly1305_seal(
     plaintext: Vec<u8>,
     aad: Vec<u8>,
 ) -> Result<Vec<u8>, CryptoFfiError> {
-    let key: [u8; 32] = fixed(key)?;
+    let key = aead_key(key)?;
     let nonce: [u8; 12] = fixed(nonce)?;
+    let plaintext = Zeroizing::new(plaintext);
     Ok(conveyance_crypto::aead::seal(
-        &AeadKey::from_bytes(key),
+        &key,
         &Nonce(nonce),
         &plaintext,
         &aad,
@@ -41,15 +43,22 @@ pub fn chacha20poly1305_open(
     ciphertext_and_tag: Vec<u8>,
     aad: Vec<u8>,
 ) -> Result<Vec<u8>, CryptoFfiError> {
-    let key: [u8; 32] = fixed(key)?;
+    let key = aead_key(key)?;
     let nonce: [u8; 12] = fixed(nonce)?;
-    conveyance_crypto::aead::open(
-        &AeadKey::from_bytes(key),
-        &Nonce(nonce),
-        &ciphertext_and_tag,
-        &aad,
-    )
-    .map_err(map_core_err)
+    let plaintext = Zeroizing::new(
+        conveyance_crypto::aead::open(&key, &Nonce(nonce), &ciphertext_and_tag, &aad)
+            .map_err(map_core_err)?,
+    );
+    Ok(plaintext.to_vec())
+}
+
+fn aead_key(bytes: Vec<u8>) -> Result<AeadKey, CryptoFfiError> {
+    let bytes = Zeroizing::new(bytes);
+    let key: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| CryptoFfiError::BadLength)?;
+    Ok(AeadKey::from_bytes(key))
 }
 
 #[cfg(test)]

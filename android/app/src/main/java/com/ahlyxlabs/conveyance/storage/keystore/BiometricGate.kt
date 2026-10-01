@@ -4,19 +4,20 @@ import javax.crypto.Cipher
 
 /** What a Tier 1 unlock is for; the real prompt shows this to the user. */
 enum class AuthPurpose {
-    UNLOCK_IDENTITY,
-    UNLOCK_CREDENTIAL,
+    SESSION_UNLOCK,
+    CHANGE_AUTH_METHOD,
+    MIGRATE_IDENTITY,
+    MIGRATE_CREDENTIAL,
     HIGH_RISK_APPROVAL,
 }
 
 /**
- * Gates a `conveyance_tier1` key operation behind a biometric /
- * device-credential prompt.
+ * Gates an Android Keystore operation behind a strong biometric prompt.
  *
- * The concrete implementation (Android `BiometricPrompt` +
- * `CryptoObject`) needs a UI host and arrives with the approval-UI phase.
- * Phase 10.2a depends only on this seam, so [IdentityVault] can be tested
- * with a fake that authorizes the cipher directly.
+ * Android's `BiometricPrompt` `CryptoObject` returns the cipher authorized
+ * for a single key use. No device-credential or weaker-auth fallback is
+ * provided. The interface keeps this activity-bound prompt out of storage
+ * logic and lets deterministic tests authorize the cipher directly.
  */
 interface BiometricGate {
     /**
