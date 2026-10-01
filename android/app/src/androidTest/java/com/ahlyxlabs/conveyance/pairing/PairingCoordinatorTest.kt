@@ -50,21 +50,23 @@ class PairingCoordinatorTest {
     private lateinit var identityVault: IdentityVault
 
     @Before
-    fun setUp() = runBlocking {
-        context.getDatabasePath(databaseName).also {
-            it.parentFile?.mkdirs()
-            it.delete()
-        }
-        database = Room.databaseBuilder(context, PairingsDatabase::class.java, databaseName)
-            .openHelperFactory(SqlCipherFactory.create(databaseKey.copyOf()))
-            .build()
-        store = PairingStore(database.pairingDao())
+    fun setUp() {
+        runBlocking {
+            context.getDatabasePath(databaseName).also {
+                it.parentFile?.mkdirs()
+                it.delete()
+            }
+            database = Room.databaseBuilder(context, PairingsDatabase::class.java, databaseName)
+                .openHelperFactory(SqlCipherFactory.create(databaseKey.copyOf()))
+                .build()
+            store = PairingStore(database.pairingDao())
 
-        File(context.filesDir, "identity.enc").delete()
-        File(context.filesDir, "identity.enc.tmp").delete()
-        val identityCrypto: SealedIdentityCrypto = UniffiSealedIdentityCrypto()
-        identityVault = IdentityVault(context, identityCrypto, StubTier1KeyProvider())
-        identityVault.createFromPhrase(RecoveryPhrase(TEST_PHRASE), FakeBiometricGate())
+            File(context.filesDir, "identity.enc").delete()
+            File(context.filesDir, "identity.enc.tmp").delete()
+            val identityCrypto: SealedIdentityCrypto = UniffiSealedIdentityCrypto()
+            identityVault = IdentityVault(context, identityCrypto, StubTier1KeyProvider())
+            identityVault.createFromPhrase(RecoveryPhrase(TEST_PHRASE), FakeBiometricGate())
+        }
     }
 
     @After
