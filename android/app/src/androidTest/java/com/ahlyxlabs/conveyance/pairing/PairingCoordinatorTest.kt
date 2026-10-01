@@ -5,12 +5,11 @@ import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.ahlyxlabs.conveyance.crypto.RecoveryPhrase
-import com.ahlyxlabs.conveyance.crypto.SealedIdentityCrypto
-import com.ahlyxlabs.conveyance.crypto.UniffiSealedIdentityCrypto
 import com.ahlyxlabs.conveyance.storage.FakeBiometricGate
-import com.ahlyxlabs.conveyance.storage.StubTier1KeyProvider
+import com.ahlyxlabs.conveyance.storage.IdentityStorageFixture
 import com.ahlyxlabs.conveyance.storage.db.SqlCipherFactory
-import com.ahlyxlabs.conveyance.storage.identity.IdentityVault
+import com.ahlyxlabs.conveyance.storage.identity.Tier1AuthInput
+import com.ahlyxlabs.conveyance.storage.identity.UnlockedPhoneSession
 import com.ahlyxlabs.conveyance.storage.pairings.PairingEntity
 import com.ahlyxlabs.conveyance.storage.pairings.PairingStore
 import com.ahlyxlabs.conveyance.storage.pairings.PairingsDatabase
@@ -21,6 +20,7 @@ import com.ahlyxlabs.conveyance.transport.link.PhoneLink
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -30,7 +30,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 /** Exercises the production coordinator around the shared protocol boundary. */
 @RunWith(AndroidJUnit4::class)
@@ -47,7 +46,8 @@ class PairingCoordinatorTest {
 
     private lateinit var database: PairingsDatabase
     private lateinit var store: PairingStore
-    private lateinit var identityVault: IdentityVault
+    private lateinit var identityFixture: IdentityStorageFixture
+    private lateinit var session: UnlockedPhoneSession
 
     @Before
     fun setUp() {
@@ -61,11 +61,15 @@ class PairingCoordinatorTest {
                 .build()
             store = PairingStore(database.pairingDao())
 
+            identityFixture = IdentityStorageFixture(context)
             File(context.filesDir, "identity.enc").delete()
-            File(context.filesDir, "identity.enc.tmp").delete()
-            val identityCrypto: SealedIdentityCrypto = UniffiSealedIdentityCrypto()
-            identityVault = IdentityVault(context, identityCrypto, StubTier1KeyProvider())
-            identityVault.createFromPhrase(RecoveryPhrase(TEST_PHRASE), FakeBiometricGate())
+            identityFixture.vault.createFromPhrase(
+                RecoveryPhrase(TEST_PHRASE),
+                Tier1AuthInput.Biometric(FakeBiometricGate()),
+            )
+            session = identityFixture.vault.unlock(
+                Tier1AuthInput.Biometric(FakeBiometricGate()),
+            ).getOrThrow()
         }
     }
 
@@ -73,8 +77,8 @@ class PairingCoordinatorTest {
     fun tearDown() {
         if (::database.isInitialized) database.close()
         context.getDatabasePath(databaseName).delete()
-        File(context.filesDir, "identity.enc").delete()
-        File(context.filesDir, "identity.enc.tmp").delete()
+        if (::session.isInitialized) session.close()
+        if (::identityFixture.isInitialized) identityFixture.close()
     }
 
     @Test
@@ -93,7 +97,7 @@ class PairingCoordinatorTest {
         val radio = TestPairingRadio(link)
         val paired = coordinator(protocol, radio).pair(
             encodedQr = "test-qr",
-            biometricGate = FakeBiometricGate(),
+            session = session,
         )
 
         assertTrue(protocol.ackVerified)
@@ -128,7 +132,7 @@ class PairingCoordinatorTest {
         val radio = TestPairingRadio(TestPhoneLink(expectedAck))
 
         val result = runCatching {
-            coordinator(protocol, radio).pair("test-qr", FakeBiometricGate())
+            coordinator(protocol, radio).pair("test-qr", session)
         }
 
         assertTrue(result.exceptionOrNull() is PairingProtocolException)
@@ -138,7 +142,7 @@ class PairingCoordinatorTest {
     }
 
     private fun coordinator(protocol: PairingProtocol, radio: PairingRadio) =
-        PairingCoordinator(protocol, identityVault, store, radio)
+        PairingCoordinator(protocol, store, radio)
 
     private inner class TestPairingProtocol(
         private val pairings: PairingStore,

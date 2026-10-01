@@ -2,6 +2,8 @@ package com.ahlyxlabs.conveyance.storage.keystore
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.app.KeyguardManager
+import androidx.biometric.BiometricManager
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
@@ -20,13 +22,15 @@ import javax.inject.Singleton
  * layer wraps its content keys under. The two are on the security axis
  * that matters:
  *
- * - **`conveyance_tier1`** wraps the identity content key and every
- *   per-service credential DEK. It is biometric / device-credential
- *   gated ([setUserAuthenticationRequired]) with a 0-second validity
- *   window, so every use needs a fresh `CryptoObject`-bound auth, and it
- *   is destroyed on any biometric enrollment change
- *   ([setInvalidatedByBiometricEnrollment]) — the two flags the spec's
- *   "Phone-side components" section mandates for Tier 1.
+ * - **`conveyance.tier1.v2`** is the biometric-only key for new vault
+ *   envelopes. It is gated by a per-use, CryptoObject-bound strong
+ *   biometric authorization and invalidated when biometric enrollment
+ *   changes. Device-credential authorization is deliberately excluded:
+ *   Android only guarantees biometric-enrollment invalidation for a key
+ *   that accepts biometric authentication alone.
+ * - **`conveyance.tier1.v1`** is retained only to read legacy v1 identity
+ *   envelopes and credential DEK wraps during the staged migration. It
+ *   must not be provisioned again.
  * - **`conveyance_db`** wraps the shared SQLCipher passphrase for the
  *   operational databases (approvals.db, pairings.db). Deliberately not
  *   auth-gated — see the SECURITY NOTE at its provisioning site.
@@ -67,10 +71,27 @@ class KeystoreKeys @Inject constructor(
      * @throws MissingLockScreenException if the device has no secure lock screen.
      */
     fun ensureTier1Key() {
-        if (!keyStore.containsAlias(TIER1_ALIAS)) generateTier1Key()
+        if (keyStore.containsAlias(TIER1_ALIAS)) return
+        val keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        if (!keyguard.isDeviceSecure) throw MissingLockScreenException()
+        if (BiometricManager.from(context).canAuthenticate(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG,
+            ) != BiometricManager.BIOMETRIC_SUCCESS
+        ) {
+            throw MissingStrongBiometricException()
+        }
+        generateTier1Key()
     }
 
     fun tier1(): SecretKey = loadKey(TIER1_ALIAS)
+
+    /** Existing key only; never recreate a lost legacy wrapping key. */
+    fun legacyTier1OrNull(): SecretKey? =
+        if (keyStore.containsAlias(LEGACY_TIER1_ALIAS)) loadKey(LEGACY_TIER1_ALIAS) else null
+
+    fun deleteLegacyTier1() {
+        if (keyStore.containsAlias(LEGACY_TIER1_ALIAS)) keyStore.deleteEntry(LEGACY_TIER1_ALIAS)
+    }
 
     fun db(): SecretKey = loadKey(DB_ALIAS)
 
@@ -96,11 +117,12 @@ class KeystoreKeys @Inject constructor(
         fun spec(strongBox: Boolean) =
             aesGcmBuilder(TIER1_ALIAS)
                 .setUserAuthenticationRequired(true)
-                // 0-second window: every use requires a fresh
-                // CryptoObject-bound biometric / device-credential auth.
+                // Zero-second validity makes each operation require a
+                // fresh biometric authorization. CryptoObject cannot be
+                // used with device-credential fallback.
                 .setUserAuthenticationParameters(
                     0,
-                    KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+                    KeyProperties.AUTH_BIOMETRIC_STRONG,
                 )
                 // Destroy the key if biometric enrollment changes: defeats
                 // "attacker enrolls their own fingerprint, then unlocks".
@@ -163,16 +185,21 @@ class KeystoreKeys @Inject constructor(
     }
 
     companion object {
-        const val TIER1_ALIAS = "conveyance.tier1.v1"
+        const val LEGACY_TIER1_ALIAS = "conveyance.tier1.v1"
+        const val TIER1_ALIAS = "conveyance.tier1.v2"
         const val DB_ALIAS = "conveyance.db.v1"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     }
 }
 
-/** `conveyance_tier1` cannot be provisioned without a device secure lock screen. */
-class MissingLockScreenException(cause: Throwable) :
+/** The biometric-only Tier 1 key cannot be provisioned without a secure lock screen. */
+class MissingLockScreenException(cause: Throwable? = null) :
     Exception(
-        "conveyance_tier1 requires a device secure lock screen " +
+        "Conveyance biometric protection requires a device secure lock screen " +
             "(biometric, PIN, pattern, or password)",
         cause,
     )
+
+/** The biometric-only Tier 1 key cannot be provisioned without a strong biometric. */
+class MissingStrongBiometricException :
+    Exception("Conveyance biometric protection requires an enrolled strong biometric")

@@ -1,6 +1,7 @@
 package com.ahlyxlabs.conveyance.storage
 
 import com.ahlyxlabs.conveyance.storage.keystore.AuthPurpose
+import com.ahlyxlabs.conveyance.storage.keystore.BiometricAuthException
 import com.ahlyxlabs.conveyance.storage.keystore.BiometricGate
 import javax.crypto.Cipher
 
@@ -11,6 +12,7 @@ import javax.crypto.Cipher
  * an invalidated key.
  */
 class FakeBiometricGate(
+    private val failAtCall: Int? = null,
     private val behavior: (Cipher) -> Cipher = { it },
 ) : BiometricGate {
 
@@ -22,6 +24,7 @@ class FakeBiometricGate(
     override suspend fun authorize(cipher: Cipher, purpose: AuthPurpose): Cipher {
         calls++
         lastPurpose = purpose
+        if (calls == failAtCall) throw BiometricAuthException("test authentication failure")
         return behavior(cipher)
     }
 }

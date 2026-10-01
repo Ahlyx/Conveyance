@@ -1,5 +1,7 @@
 package com.ahlyxlabs.conveyance.session
 
+import com.ahlyxlabs.conveyance.storage.identity.Tier1AuthMethod
+import com.ahlyxlabs.conveyance.storage.identity.UnlockedPhoneSession
 import com.ahlyxlabs.conveyance.transport.framing.Frame
 import com.ahlyxlabs.conveyance.transport.framing.InboundAssembler
 import com.ahlyxlabs.conveyance.transport.framing.MessageSplitter
@@ -23,7 +25,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.time.Duration.Companion.hours
@@ -54,6 +55,15 @@ class PhoneSessionTest {
     private val pcPub = com.ahlyxlabs.conveyance.crypto.X25519PublicKey(ByteArray(32))
     private val mtu23 = Frame.maxFramePayload(23)
 
+    private fun testUnlockedSession(
+        identity: FakeUnlockedIdentity = FakeUnlockedIdentity(),
+    ) = UnlockedPhoneSession(
+        identity = identity,
+        authMethod = Tier1AuthMethod.BIOMETRIC,
+        generation = ByteArray(16),
+        vaultKey = ByteArray(32) { 0x4a },
+    )
+
     private class Harness(
         val session: PhoneSession,
         val crypto: FakeNoiseSessionCrypto,
@@ -72,8 +82,9 @@ class PhoneSessionTest {
         val (a, b) = LoopbackLink.pair(maxWriteLen = maxWriteLen)
         val crypto = FakeNoiseSessionCrypto(completeAfterReads, failFirstRead)
         val ended = mutableListOf<EndReason>()
+        val unlockedSession = testUnlockedSession()
         val session = PhoneSession(
-            identity = FakeUnlockedIdentity(),
+            unlockedSession = unlockedSession,
             pcStaticPublic = pcPub,
             link = a,
             params = params,
@@ -323,13 +334,14 @@ class PhoneSessionTest {
     @Test
     fun handshakeFailureRecoversWithTheSameIdentity() = runTest(dispatcher) {
         val identity = FakeUnlockedIdentity()
+        val unlockedSession = testUnlockedSession(identity)
 
         // Attempt 1: crypto set to fail the first read.
         run {
             val (a, b) = LoopbackLink.pair()
             val ended = mutableListOf<EndReason>()
             val s1 = PhoneSession(
-                identity, pcPub, a, SessionParams.specDefaults(),
+                unlockedSession, pcPub, a, SessionParams.specDefaults(),
                 FakeNoiseSessionCrypto(failFirstRead = true), dispatcher,
             ) { ended += it }
             FakePc(b).collectIn(backgroundScope)
@@ -343,7 +355,7 @@ class PhoneSessionTest {
         val (a2, b2) = LoopbackLink.pair()
         val ended2 = mutableListOf<EndReason>()
         val s2 = PhoneSession(
-            identity, pcPub, a2, SessionParams.specDefaults(),
+            unlockedSession, pcPub, a2, SessionParams.specDefaults(),
             FakeNoiseSessionCrypto(), dispatcher,
         ) { ended2 += it }
         FakePc(b2).collectIn(backgroundScope)
@@ -352,9 +364,10 @@ class PhoneSessionTest {
         assertEquals(SessionState.Active, s2.state.value)
         s2.send("ok".toByteArray())
         advanceUntilIdle()
-        assertFalse(identity.closed) // PhoneSession never closes the caller's identity
         s2.endNow(EndReason.UserEnded)
         advanceUntilIdle()
+        assertTrue(identity.closed) // active-session end wipes the owned Tier 1 session
+        assertTrue(runCatching { unlockedSession.vaultKeyCopy() }.isFailure)
     }
 
     // -- transport ---------------------------------------------------------
@@ -424,7 +437,7 @@ class PhoneSessionTest {
         val link = GateablePhoneLink(rawPhone)
         val crypto = FakeNoiseSessionCrypto()
         val session = PhoneSession(
-            identity = FakeUnlockedIdentity(),
+            unlockedSession = testUnlockedSession(),
             pcStaticPublic = pcPub,
             link = link,
             params = SessionParams.specDefaults(),

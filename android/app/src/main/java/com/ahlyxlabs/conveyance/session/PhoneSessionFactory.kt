@@ -1,7 +1,7 @@
 package com.ahlyxlabs.conveyance.session
 
-import com.ahlyxlabs.conveyance.crypto.UnlockedIdentity
 import com.ahlyxlabs.conveyance.crypto.X25519PublicKey
+import com.ahlyxlabs.conveyance.storage.identity.UnlockedPhoneSession
 import com.ahlyxlabs.conveyance.session.di.SessionDispatcher
 import com.ahlyxlabs.conveyance.transport.link.PhoneLink
 import javax.inject.Inject
@@ -23,7 +23,7 @@ class PhoneSessionFactory @Inject constructor(
 ) {
 
     /**
-     * @param identity the unlocked phone identity (its X25519 static stays
+     * @param unlockedSession the Tier 1 session holding the Rust-owned identity
      *   in Rust — see [NoiseSessionCrypto]).
      * @param pcStaticPublic the paired PC's long-term X25519 public key.
      * @param link the live connection, already SUBSCRIBED (10.3b).
@@ -35,13 +35,13 @@ class PhoneSessionFactory @Inject constructor(
      *   the BLE peripheral. It is never invoked for an aborted handshake.
      */
     fun create(
-        identity: UnlockedIdentity,
+        unlockedSession: UnlockedPhoneSession,
         pcStaticPublic: X25519PublicKey,
         link: PhoneLink,
         params: SessionParams = SessionParams.specDefaults(),
         onEnded: (EndReason) -> Unit,
     ): PhoneSession = PhoneSession(
-        identity = identity,
+        unlockedSession = unlockedSession,
         pcStaticPublic = pcStaticPublic,
         link = link,
         params = params,

@@ -15,11 +15,12 @@
 
 use std::sync::Arc;
 
-use crate::{CryptoFfiError, fixed, map_core_err};
+use crate::{CryptoFfiError, map_core_err};
 use conveyance_crypto::dh::DhSecret;
 use conveyance_crypto::recovery::RecoveryPhrase;
 use conveyance_crypto::sealed;
 use conveyance_crypto::sign::IdentitySecretKey;
+use zeroize::Zeroizing;
 
 /// Output of [`create_sealed_identity`]: the versioned `identity.enc`
 /// bytes plus the two public keys (safe to hold in the clear).
@@ -38,7 +39,7 @@ pub fn create_sealed_identity(
     phrase: String,
     content_key: Vec<u8>,
 ) -> Result<SealedIdentity, CryptoFfiError> {
-    let content_key: [u8; 32] = fixed(content_key)?;
+    let content_key = secret_key(content_key)?;
     let phrase = RecoveryPhrase::from_words(&phrase).map_err(map_core_err)?;
     let s = sealed::seal_identity(&conveyance_crypto::OsEntropy, &content_key, &phrase)
         .map_err(map_core_err)?;
@@ -56,7 +57,7 @@ pub fn open_sealed_identity(
     blob: Vec<u8>,
     content_key: Vec<u8>,
 ) -> Result<Arc<UnlockedIdentity>, CryptoFfiError> {
-    let content_key: [u8; 32] = fixed(content_key)?;
+    let content_key = secret_key(content_key)?;
     let secrets = sealed::open_identity(&content_key, &blob).map_err(map_core_err)?;
     Ok(Arc::new(UnlockedIdentity { secrets }))
 }
@@ -113,7 +114,8 @@ impl UnlockedIdentity {
 /// Seal one credential secret under a per-service DEK (32 bytes).
 #[uniffi::export]
 pub fn seal_credential(secret: Vec<u8>, dek: Vec<u8>) -> Result<Vec<u8>, CryptoFfiError> {
-    let dek: [u8; 32] = fixed(dek)?;
+    let dek = secret_key(dek)?;
+    let secret = Zeroizing::new(secret);
     sealed::seal_credential(&conveyance_crypto::OsEntropy, &dek, &secret).map_err(map_core_err)
 }
 
@@ -122,8 +124,17 @@ pub fn seal_credential(secret: Vec<u8>, dek: Vec<u8>) -> Result<Vec<u8>, CryptoF
 /// opened one at a time, never in bulk.
 #[uniffi::export]
 pub fn open_credential(blob: Vec<u8>, dek: Vec<u8>) -> Result<Vec<u8>, CryptoFfiError> {
-    let dek: [u8; 32] = fixed(dek)?;
+    let dek = secret_key(dek)?;
     sealed::open_credential(&dek, &blob).map_err(map_core_err)
+}
+
+fn secret_key(bytes: Vec<u8>) -> Result<Zeroizing<[u8; 32]>, CryptoFfiError> {
+    let bytes = Zeroizing::new(bytes);
+    let key: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| CryptoFfiError::BadLength)?;
+    Ok(Zeroizing::new(key))
 }
 
 #[cfg(test)]

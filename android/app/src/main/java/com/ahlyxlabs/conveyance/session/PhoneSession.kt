@@ -1,7 +1,7 @@
 package com.ahlyxlabs.conveyance.session
 
-import com.ahlyxlabs.conveyance.crypto.UnlockedIdentity
 import com.ahlyxlabs.conveyance.crypto.X25519PublicKey
+import com.ahlyxlabs.conveyance.storage.identity.UnlockedPhoneSession
 import com.ahlyxlabs.conveyance.transport.framing.FramingException
 import com.ahlyxlabs.conveyance.transport.framing.InboundAssembler
 import com.ahlyxlabs.conveyance.transport.framing.MessageSplitter
@@ -92,7 +92,7 @@ const val HANDSHAKE_BUDGET_MS: Long = 30_000
  * send/receive surface from here — never the raw [NoiseSession] handle.
  */
 class PhoneSession internal constructor(
-    private val identity: UnlockedIdentity,
+    val unlockedSession: UnlockedPhoneSession,
     private val pcStaticPublic: X25519PublicKey,
     private val link: PhoneLink,
     private val params: SessionParams,
@@ -100,6 +100,8 @@ class PhoneSession internal constructor(
     private val dispatcher: CoroutineDispatcher,
     private val onEnded: (EndReason) -> Unit,
 ) {
+
+    private val identity get() = unlockedSession.identity
 
     private enum class HandshakeDecision {
         Pending,
@@ -482,6 +484,7 @@ class PhoneSession internal constructor(
         timers = null
         noise?.close()
         noise = null
+        unlockedSession.close()
         inboundChannel.close()
         link.shutdown()
         try {

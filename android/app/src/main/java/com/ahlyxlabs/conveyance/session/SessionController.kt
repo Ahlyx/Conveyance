@@ -1,6 +1,6 @@
 package com.ahlyxlabs.conveyance.session
 
-import com.ahlyxlabs.conveyance.crypto.UnlockedIdentity
+import com.ahlyxlabs.conveyance.storage.identity.UnlockedPhoneSession
 import com.ahlyxlabs.conveyance.crypto.X25519PublicKey
 
 /**
@@ -21,7 +21,7 @@ import com.ahlyxlabs.conveyance.crypto.X25519PublicKey
  *  5. expose [current] for the session-status UI (10.10) and the kill switch.
  *
  * A failed [startSession] leaves [current] null; a fresh call with the same
- * identity must proceed cleanly (spec 1631310).
+ * unlocked Tier 1 session must proceed cleanly (spec 1631310).
  */
 interface SessionController {
 
@@ -35,7 +35,7 @@ interface SessionController {
      * @throws SessionException.HandshakeFailed on any handshake failure.
      */
     suspend fun startSession(
-        identity: UnlockedIdentity,
+        unlockedSession: UnlockedPhoneSession,
         pcStaticPublic: X25519PublicKey,
     ): PhoneSession
 

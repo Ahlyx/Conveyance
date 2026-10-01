@@ -2,8 +2,7 @@ package com.ahlyxlabs.conveyance.pairing
 
 import android.Manifest
 import androidx.annotation.RequiresPermission
-import com.ahlyxlabs.conveyance.storage.identity.IdentityVault
-import com.ahlyxlabs.conveyance.storage.keystore.BiometricGate
+import com.ahlyxlabs.conveyance.storage.identity.UnlockedPhoneSession
 import com.ahlyxlabs.conveyance.storage.pairings.PairingEntity
 import com.ahlyxlabs.conveyance.storage.pairings.PairingStore
 import com.ahlyxlabs.conveyance.transport.framing.InboundAssembler
@@ -22,7 +21,6 @@ import kotlinx.coroutines.withTimeout
 @Singleton
 class PairingCoordinator @Inject constructor(
     private val protocol: PairingProtocol,
-    private val identityVault: IdentityVault,
     private val pairings: PairingStore,
     private val radio: PairingRadio,
 ) {
@@ -31,14 +29,11 @@ class PairingCoordinator @Inject constructor(
     )
     suspend fun pair(
         encodedQr: String,
-        biometricGate: BiometricGate,
+        session: UnlockedPhoneSession,
         onStatus: (String) -> Unit = {},
     ): PairingEntity {
         val request = protocol.parse(encodedQr, unixNow())
-        val identity = identityVault.unlock(biometricGate).getOrElse {
-            throw PairingProtocolException(PairingProtocolException.Kind.FAILED, cause = it)
-        }
-        val confirm = identity.use { request.createConfirm(it) }
+        val confirm = request.createConfirm(session.identity)
 
         val connectTimeoutMillis = ((request.expires - unixNow()).coerceAtLeast(0) * 1_000)
             .coerceAtMost(QR_CONNECT_WINDOW_MS)

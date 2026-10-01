@@ -61,29 +61,48 @@ class UniffiConveyanceCrypto @Inject constructor() : ConveyanceCrypto {
 
     override fun canonicalize(json: String): String = guard { ffiCanonicalJson(json) }
 
-    override fun deriveDek(passphrase: ByteArray, salt: ByteArray): DerivedKey =
-        DerivedKey(guard { argon2idDeriveDek(passphrase, salt) })
+    override fun deriveDek(passphrase: ByteArray, salt: ByteArray): DerivedKey {
+        val bytes = guard { argon2idDeriveDek(passphrase, salt) }
+        return try {
+            DerivedKey(bytes)
+        } finally {
+            bytes.fill(0)
+        }
+    }
 
     override fun seal(
         key: AeadKey,
         nonce: AeadNonce,
         plaintext: ByteArray,
         aad: ByteArray,
-    ): ByteArray = guard { chacha20poly1305Seal(key.bytes(), nonce.bytes, plaintext, aad) }
+    ): ByteArray {
+        val keyBytes = key.bytes()
+        return try {
+            guard { chacha20poly1305Seal(keyBytes, nonce.bytes, plaintext, aad) }
+        } finally {
+            keyBytes.fill(0)
+        }
+    }
 
     override fun open(
         key: AeadKey,
         nonce: AeadNonce,
         ciphertext: ByteArray,
         aad: ByteArray,
-    ): Result<ByteArray> =
+    ): Result<ByteArray> {
+        val keyBytes = key.bytes()
+        return try {
         try {
-            Result.success(chacha20poly1305Open(key.bytes(), nonce.bytes, ciphertext, aad))
+            Result.success(chacha20poly1305Open(keyBytes, nonce.bytes, ciphertext, aad))
         } catch (e: CryptoFfiException.DecryptionFailed) {
             Result.failure(CryptoException.DecryptionFailed())
         } catch (e: CryptoFfiException) {
             throw mapCryptoFfiException(e)
         }
+        } finally {
+            keyBytes.fill(0)
+        }
+    }
 
     override fun hkdfBlake2s(ikm: ByteArray, info: ByteArray, length: Int): ByteArray {
         require(length > 0) { "HKDF length must be positive" }
