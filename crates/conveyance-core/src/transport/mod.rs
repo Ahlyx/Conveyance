@@ -87,6 +87,10 @@ pub trait Link: Send {
     /// state dies with the link and nothing panics.
     fn recv(&mut self) -> impl Future<Output = Result<Vec<u8>, TransportError>> + Send;
 
+    /// Read one already queued inbound chunk without waiting. `Ok(None)`
+    /// means the queue is empty; `Err` means the link is no longer usable.
+    fn try_recv(&mut self) -> Result<Option<Vec<u8>>, TransportError>;
+
     /// Begin teardown. Idempotent; after this, `send`/`recv` return
     /// `InvalidState` or `Disconnected` rather than blocking forever.
     fn shutdown(&mut self);

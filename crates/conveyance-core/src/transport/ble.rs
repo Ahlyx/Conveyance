@@ -258,6 +258,14 @@ impl Link for BleLink {
         }
     }
 
+    fn try_recv(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        match self.rx.try_recv() {
+            Ok(chunk) => Ok(Some(chunk)),
+            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::error::TryRecvError::Disconnected) => Err(TransportError::Disconnected),
+        }
+    }
+
     fn shutdown(&mut self) {
         // disconnect() is async but Link::shutdown is sync; drive it on
         // the runtime rather than dropping it unawaited. Requires a live

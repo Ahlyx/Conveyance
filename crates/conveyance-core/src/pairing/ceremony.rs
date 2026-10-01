@@ -15,16 +15,17 @@ use std::time::Duration;
 
 use crate::crypto::EntropySource;
 use crate::time::unix_now;
-use crate::transport::Link;
+use crate::transport::{InboundAssembler, Link};
 
 use crate::crypto::sign::IdentitySecretKey;
 use crate::storage::pairings::PairingsDb;
 use crate::transport::Transport;
-use crate::wire::message::{WireMessage, decode, encode};
+use crate::wire::framing::split_message;
+use crate::wire::message::{WireMessage, encode};
 
 use super::PairingError;
 use super::machine::{self, Event, PairingState};
-use super::messages::PairingAck;
+use super::messages::{PairingAck, decode_confirm_message};
 use super::nonce::NonceGuard;
 use super::qr::PairingQr;
 
@@ -148,27 +149,39 @@ where
         }};
     }
 
-    let inbound = match tokio::time::timeout(limits.confirm_timeout, Box::pin(link.recv())).await {
-        Err(_) => fail_via!(Event::ConfirmTimeout, PairingError::ConfirmTimedOut),
-        Ok(Err(_)) => {
-            // Transport died before any confirm existed. Nothing was ever
-            // received, so there is no replay to record; the nonce dies
-            // with this QR regardless.
-            return Err(PairingError::GenericFailed);
+    let inbound = match receive_pairing_confirm(&mut link, limits.confirm_timeout).await {
+        Ok(message) => message,
+        Err(ConfirmReceiveError::TimedOut) => {
+            fail_via!(Event::ConfirmTimeout, PairingError::ConfirmTimedOut)
         }
-        Ok(Ok(chunk)) => chunk,
+        Err(ConfirmReceiveError::Invalid) => {
+            fail_via!(Event::InvalidConfirm, PairingError::GenericFailed)
+        }
+        Err(ConfirmReceiveError::InvalidAfterMessage) => {
+            // A complete application message was received, so consume the
+            // QR nonce even if trailing data or transport teardown makes
+            // the one-shot exchange invalid.
+            if ctx.nonces.record_and_check(&nonce) {
+                eprintln!("pairing rejected: replayed pairing nonce");
+                fail_via!(Event::InvalidConfirm, PairingError::ReplayedNonce);
+            }
+            fail_via!(Event::InvalidConfirm, PairingError::GenericFailed)
+        }
     };
 
-    let confirm = match decode(&inbound) {
-        Ok(WireMessage::PairingConfirm(c)) => c,
-        _ => fail_via!(Event::InvalidConfirm, PairingError::GenericFailed),
-    };
-
-    // Replay gate FIRST: consumes the nonce whatever happens next.
+    // Replay gate FIRST: a completed application message consumes the QR
+    // nonce even if it is malformed, unexpected, or has an invalid signer.
     if ctx.nonces.record_and_check(&nonce) {
         eprintln!("pairing rejected: replayed pairing nonce");
         fail_via!(Event::InvalidConfirm, PairingError::ReplayedNonce);
     }
+
+    // A single pairing Link carries exactly one confirm. The receive path
+    // rejects any additional complete message before this point.
+    let confirm = match decode_confirm_message(&inbound) {
+        Ok(confirm) => confirm,
+        Err(_) => fail_via!(Event::InvalidConfirm, PairingError::GenericFailed),
+    };
 
     // Signature second. Wrong-key/tampered/impostor all collapse here --
     // generic toward users per the spec's MUST-NOT-indicate rule. The
@@ -193,10 +206,26 @@ where
         &confirm.phone_id_pub,
         &confirm.phone_dh_pub,
     );
-    if let Err(e) = link.send(&encode(&WireMessage::PairingAck(ack))?).await {
-        state = machine::step(state, Event::AckWriteFailed).expect("ack failure while ACK_SENT");
-        debug_assert_eq!(state, PairingState::Unpaired);
-        return Err(PairingError::Transport(e.to_string()));
+    let ack_bytes = encode(&WireMessage::PairingAck(ack))?;
+    // Pairing owns a fresh Link and sends one application message, so its
+    // outbound sequence starts at zero. A later Noise session opens a new
+    // Link and starts its own framing state.
+    let (frames, _next_tx_seq) = match split_message(&ack_bytes, link.max_write_len(), 0) {
+        Ok(split) => split,
+        Err(_) => {
+            state = machine::step(state, Event::AckWriteFailed)
+                .expect("ack framing failure while ACK_SENT");
+            debug_assert_eq!(state, PairingState::Unpaired);
+            return Err(PairingError::GenericFailed);
+        }
+    };
+    for frame in frames {
+        if let Err(e) = link.send(&frame).await {
+            state =
+                machine::step(state, Event::AckWriteFailed).expect("ack failure while ACK_SENT");
+            debug_assert_eq!(state, PairingState::Unpaired);
+            return Err(PairingError::Transport(e.to_string()));
+        }
     }
 
     // ---- PAIRED ----------------------------------------------------------
@@ -213,6 +242,75 @@ where
     })
 }
 
+#[derive(Debug)]
+enum ConfirmReceiveError {
+    TimedOut,
+    Invalid,
+    InvalidAfterMessage,
+}
+
+/// Receive and reassemble the phone's one pairing application message.
+/// The single timeout wraps the entire loop, so trickling valid partial
+/// frames cannot restart the confirm window. After the first complete
+/// message, inspect a bounded number of already-queued chunks to reject
+/// extra messages or trailing partial framing without delaying the Ack.
+async fn receive_pairing_confirm<L: Link>(
+    link: &mut L,
+    timeout: Duration,
+) -> Result<Vec<u8>, ConfirmReceiveError> {
+    const MAX_QUEUED_CHUNKS_TO_DRAIN: usize = 64;
+
+    let mut assembler = InboundAssembler::new();
+    let receive = async {
+        let mut confirm = None;
+        let mut drained_chunks = 0;
+        loop {
+            let chunk = if confirm.is_some() {
+                match link
+                    .try_recv()
+                    .map_err(|_| ConfirmReceiveError::InvalidAfterMessage)?
+                {
+                    Some(chunk) => {
+                        drained_chunks += 1;
+                        if drained_chunks > MAX_QUEUED_CHUNKS_TO_DRAIN {
+                            return Err(ConfirmReceiveError::InvalidAfterMessage);
+                        }
+                        chunk
+                    }
+                    None if assembler.is_idle() => {
+                        return confirm.take().ok_or(ConfirmReceiveError::Invalid);
+                    }
+                    None => return Err(ConfirmReceiveError::InvalidAfterMessage),
+                }
+            } else {
+                link.recv()
+                    .await
+                    .map_err(|_| ConfirmReceiveError::Invalid)?
+            };
+            let messages = assembler.ingest(&chunk).map_err(|_| {
+                if confirm.is_some() {
+                    ConfirmReceiveError::InvalidAfterMessage
+                } else {
+                    ConfirmReceiveError::Invalid
+                }
+            })?;
+            match (confirm.is_some(), messages.as_slice()) {
+                (false, []) | (true, []) => {}
+                (false, [message]) => confirm = Some(message.clone()),
+                // A second application message, whether coalesced into
+                // the completing chunk or queued separately, violates the
+                // one-shot pairing protocol.
+                (false, _) | (true, _) => {
+                    return Err(ConfirmReceiveError::InvalidAfterMessage);
+                }
+            }
+        }
+    };
+    tokio::time::timeout(timeout, receive)
+        .await
+        .map_err(|_| ConfirmReceiveError::TimedOut)?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,28 +319,41 @@ mod tests {
     use crate::crypto::sign::IdentityPublicKey;
     use crate::crypto::test_support::{CounterEntropy, FixedEntropy};
     use crate::pairing::messages::PairingConfirm;
+    use crate::session::{PeerIdentity, Role, SessionHandshake, SessionParams};
+    use crate::storage::identity::StoredIdentity;
     use crate::storage::pairings::PairingsDb;
-    use crate::transport::TransportError;
+    use crate::test_support::MockKeyProvider;
     use crate::transport::mock::MockTransport;
+    use crate::transport::{InboundAssembler, TransportError};
+    use crate::wire::framing::split_message;
     use tokio::sync::mpsc;
 
     #[derive(Clone)]
     struct PhoneKeys {
         id_secret: IdentitySecretKey,
         id_pub: [u8; 32],
+        dh_secret: DhSecret,
         dh_pub: [u8; 32],
     }
 
     fn phone_keys() -> PhoneKeys {
         let id_secret = IdentitySecretKey::generate(&CounterEntropy).unwrap();
-        let dh = DhSecret::generate(&OsEntropy).unwrap();
+        let dh_secret = DhSecret::generate(&OsEntropy).unwrap();
         let id_pub = id_secret.public_key().to_bytes();
-        let dh_pub = dh.public_key().to_bytes();
+        let dh_pub = dh_secret.public_key().to_bytes();
         PhoneKeys {
             id_secret,
             id_pub,
+            dh_secret,
             dh_pub,
         }
+    }
+
+    struct PhoneObservation {
+        pc_id_pub: [u8; 32],
+        pc_dh_pub: [u8; 32],
+        confirm_frames: usize,
+        ack_frames: usize,
     }
 
     #[derive(Clone, Copy)]
@@ -253,8 +364,6 @@ mod tests {
         StaleContext,
     }
 
-    type StoredPeer = ([u8; 32], [u8; 32]);
-
     /// Mock phone: parse the displayed QR, sign+send Confirm per mode,
     /// verify the Ack, and report what it stored about the PC.
     fn spawn_phone(
@@ -262,7 +371,7 @@ mod tests {
         keys: PhoneKeys,
         mut qr_rx: mpsc::Receiver<String>,
         mode: Mode,
-    ) -> tokio::task::JoinHandle<Option<StoredPeer>> {
+    ) -> tokio::task::JoinHandle<Option<PhoneObservation>> {
         tokio::spawn(async move {
             let text = match qr_rx.recv().await {
                 Some(t) => t,
@@ -290,19 +399,53 @@ mod tests {
                 );
             }
 
-            let raw_confirm = encode(&WireMessage::PairingConfirm(confirm)).ok()?;
-            link.send(&raw_confirm).await.ok()?;
-
-            let raw_ack = link.recv().await.ok()?;
-            match decode(&raw_ack).ok()? {
-                WireMessage::PairingAck(ack) => {
-                    let pc_public = IdentityPublicKey::from_bytes(&ack.pc_id_pub).ok()?;
-                    ack.verify(&pc_public).ok()?;
-                    Some((ack.pc_id_pub, qr.pc_dh_pub))
-                }
-                _ => None,
+            let raw_confirm = crate::pairing::messages::encode_confirm_message(&confirm).ok()?;
+            let (confirm_frames, _) = split_message(&raw_confirm, link.max_write_len(), 0).ok()?;
+            let confirm_frame_count = confirm_frames.len();
+            for frame in confirm_frames {
+                link.send(&frame).await.ok()?;
             }
+
+            let mut assembler = InboundAssembler::new();
+            let mut ack_frame_count = 0;
+            let raw_ack = loop {
+                let chunk = link.recv().await.ok()?;
+                ack_frame_count += 1;
+                let messages = assembler.ingest(&chunk).ok()?;
+                if messages.len() > 1 {
+                    return None;
+                }
+                if let Some(message) = messages.into_iter().next() {
+                    break message;
+                }
+            };
+            let ack = crate::pairing::messages::decode_ack_message(&raw_ack).ok()?;
+            if ack.nonce != qr.nonce
+                || ack.pc_id_pub != qr.pc_id_pub
+                || ack.phone_id_pub != keys.id_pub
+                || ack.phone_dh_pub != keys.dh_pub
+            {
+                return None;
+            }
+            let pc_public = IdentityPublicKey::from_bytes(&qr.pc_id_pub).ok()?;
+            ack.verify(&pc_public).ok()?;
+            Some(PhoneObservation {
+                pc_id_pub: qr.pc_id_pub,
+                pc_dh_pub: qr.pc_dh_pub,
+                confirm_frames: confirm_frame_count,
+                ack_frames: ack_frame_count,
+            })
         })
+    }
+
+    fn valid_confirm_for(qr: &PairingQr, keys: &PhoneKeys) -> PairingConfirm {
+        PairingConfirm::sign(
+            &keys.id_secret,
+            &qr.pc_id_pub,
+            &qr.nonce,
+            &keys.id_pub,
+            &keys.dh_pub,
+        )
     }
 
     /// Destructured fixture fields. Tests destructure ONCE so that
@@ -321,6 +464,10 @@ mod tests {
     }
 
     fn fixture() -> FixtureParts {
+        fixture_with_max_write(24)
+    }
+
+    fn fixture_with_max_write(max_write: usize) -> FixtureParts {
         let dir = tempfile::tempdir().unwrap();
         let store = PairingsDb::open(&dir.path().join("pairings.db")).unwrap();
         let nonces = NonceGuard::open(&dir.path().join("nonces.bin"));
@@ -330,7 +477,7 @@ mod tests {
             .public_key()
             .to_bytes();
         let (qr_tx, qr_rx) = mpsc::channel(4);
-        let (ta, tb) = MockTransport::pair();
+        let (ta, tb) = MockTransport::pair_with(256, max_write);
         FixtureParts {
             store,
             nonces,
@@ -404,9 +551,94 @@ mod tests {
             crate::storage::pairings::phone_id_for(&peer.phone_id_pub)
         );
 
-        let (pc_id, pc_dh) = handle.await.unwrap().expect("phone stored PC identity");
-        assert_eq!(pc_id, signer.public_key().to_bytes());
-        assert_eq!(pc_dh, pc_dh_pub);
+        let phone = handle
+            .await
+            .unwrap()
+            .expect("phone verified and stored PC identity");
+        assert_eq!(phone.pc_id_pub, signer.public_key().to_bytes());
+        assert_eq!(phone.pc_dh_pub, pc_dh_pub);
+        assert!(phone.confirm_frames > 1, "Confirm must use multiple frames");
+        assert!(phone.ack_frames > 1, "Ack must use multiple frames");
+    }
+
+    #[tokio::test]
+    async fn pairing_qr_static_key_continues_into_noise_kk() {
+        let dir = tempfile::tempdir().unwrap();
+        let identity_path = dir.path().join("identity.enc");
+        let key_provider = MockKeyProvider::default();
+        let generated = StoredIdentity::generate(&OsEntropy).unwrap();
+        generated
+            .save(&identity_path, &key_provider, &CounterEntropy)
+            .unwrap();
+        let pc_identity = StoredIdentity::load(&identity_path, &key_provider).unwrap();
+        let pc_dh_pub = pc_identity.x25519_public_key();
+        let pc_signer = pc_identity.identity_key();
+
+        let pairings = PairingsDb::open(&dir.path().join("pairings.db")).unwrap();
+        let mut nonces = NonceGuard::open(&dir.path().join("nonces.bin"));
+        let (qr_tx, qr_rx) = mpsc::channel(4);
+        let (mut pc_transport, mut phone_transport) = MockTransport::pair_with(256, 24);
+        let phone_link = phone_transport.connect(Duration::ZERO).await.unwrap();
+        drop(phone_transport);
+        let phone_keys = phone_keys();
+        let phone_keys_for_ceremony = phone_keys.clone();
+        let phone_task = spawn_phone(phone_link, phone_keys_for_ceremony, qr_rx, Mode::Valid);
+
+        let mut context = CeremonyContext {
+            pc_id_secret: &pc_signer,
+            pc_dh_pub,
+            pc_name: "dev-pc".into(),
+            service_uuid_bytes: crate::transport::ids::service_uuid_bytes(),
+            store: &pairings,
+            nonces: &mut nonces,
+        };
+        let paired = run_pairing(
+            &mut pc_transport,
+            &mut context,
+            CeremonyLimits::raw(60, 10, 300),
+            &OsEntropy,
+            display_to(&qr_tx),
+        )
+        .await
+        .expect("valid framed pairing completes");
+        let phone_view = phone_task
+            .await
+            .unwrap()
+            .expect("phone verified and stored the Ack");
+
+        assert_eq!(phone_view.pc_dh_pub, pc_identity.x25519_public_key());
+        assert_ne!(phone_view.pc_dh_pub, *pc_identity.x25519_secret.expose());
+        let stored_phone = pairings.list().unwrap().pop().unwrap();
+        assert_eq!(stored_phone.id_pub, paired.phone_id_pub);
+        assert_eq!(stored_phone.dh_pub, paired.phone_dh_pub);
+
+        // The phone pins the QR value as its Noise remote static. The PC
+        // responder uses the matching secret loaded from encrypted storage.
+        let phone_identity = PeerIdentity {
+            local_static: crate::crypto::Secret::from_bytes(phone_keys.dh_secret.to_bytes()),
+            remote_static: phone_view.pc_dh_pub,
+        };
+        let pc_session_identity = PeerIdentity {
+            local_static: crate::crypto::Secret::from_bytes(*pc_identity.x25519_secret.expose()),
+            remote_static: stored_phone.dh_pub,
+        };
+        let mut phone_handshake =
+            SessionHandshake::begin(Role::Initiator, &phone_identity).unwrap();
+        let mut pc_handshake =
+            SessionHandshake::begin(Role::Responder, &pc_session_identity).unwrap();
+        let first = phone_handshake.write_message(b"").unwrap();
+        pc_handshake.read_message(&first).unwrap();
+        let second = pc_handshake.write_message(b"").unwrap();
+        phone_handshake.read_message(&second).unwrap();
+
+        let params = SessionParams::spec_defaults();
+        let mut phone_session = phone_handshake.establish(params).unwrap();
+        let mut pc_session = pc_handshake.establish(params).unwrap();
+        let sealed = phone_session.send(b"paired static key continuity").unwrap();
+        assert_eq!(
+            pc_session.receive(&sealed).unwrap(),
+            b"paired static key continuity"
+        );
     }
 
     #[tokio::test]
@@ -540,6 +772,289 @@ mod tests {
         assert!(matches!(result, Err(PairingError::GenericFailed)));
         assert_eq!(store.count().unwrap(), 0);
         let _ = handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn malformed_frame_fails_closed_without_persisting() {
+        let FixtureParts {
+            _dir,
+            store,
+            mut nonces,
+            signer,
+            pc_dh_pub,
+            mut ta,
+            mut tb,
+            ..
+        } = fixture();
+        let mut phone_link = tb.connect(Duration::ZERO).await.unwrap();
+        drop(tb);
+
+        let malformed = crate::wire::framing::encode_frame(
+            0,
+            crate::wire::framing::FLAG_START | 0b1000,
+            b"bad",
+        );
+        phone_link.send(&malformed).await.unwrap();
+
+        let mut ctx = CeremonyContext {
+            pc_id_secret: &signer,
+            pc_dh_pub,
+            pc_name: "dev-pc".into(),
+            service_uuid_bytes: crate::transport::ids::service_uuid_bytes(),
+            store: &store,
+            nonces: &mut nonces,
+        };
+        let result = run_pairing(
+            &mut ta,
+            &mut ctx,
+            CeremonyLimits::raw(60, 10, 300),
+            &OsEntropy,
+            |_| {},
+        )
+        .await;
+
+        assert!(matches!(result, Err(PairingError::GenericFailed)));
+        assert_eq!(store.count().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn truncated_confirm_then_disconnect_fails_closed_without_persisting() {
+        let FixtureParts {
+            _dir,
+            store,
+            mut nonces,
+            signer,
+            pc_dh_pub,
+            qr_tx,
+            mut qr_rx,
+            mut ta,
+            mut tb,
+        } = fixture();
+        let mut phone_link = tb.connect(Duration::ZERO).await.unwrap();
+        drop(tb);
+        let mut qr_rx = qr_rx.take().unwrap();
+        let keys = phone_keys();
+        let phone = tokio::spawn(async move {
+            let text = qr_rx.recv().await?;
+            let qr = PairingQr::parse(&text, unix_now()).ok()?;
+            let confirm = valid_confirm_for(&qr, &keys);
+            let bytes = crate::pairing::messages::encode_confirm_message(&confirm).ok()?;
+            let (frames, _) = split_message(&bytes, phone_link.max_write_len(), 0).ok()?;
+            assert!(frames.len() > 1);
+            phone_link.send(&frames[0]).await.ok()?;
+            phone_link.shutdown();
+            Some(())
+        });
+
+        let mut ctx = CeremonyContext {
+            pc_id_secret: &signer,
+            pc_dh_pub,
+            pc_name: "dev-pc".into(),
+            service_uuid_bytes: crate::transport::ids::service_uuid_bytes(),
+            store: &store,
+            nonces: &mut nonces,
+        };
+        let result = run_pairing(
+            &mut ta,
+            &mut ctx,
+            CeremonyLimits::raw(60, 10, 300),
+            &OsEntropy,
+            display_to(&qr_tx),
+        )
+        .await;
+
+        assert!(matches!(result, Err(PairingError::GenericFailed)));
+        assert_eq!(store.count().unwrap(), 0);
+        assert_eq!(phone.await.unwrap(), Some(()));
+    }
+
+    #[tokio::test]
+    async fn confirm_timeout_covers_the_entire_trickled_framed_message() {
+        let FixtureParts {
+            _dir,
+            store,
+            mut nonces,
+            signer,
+            pc_dh_pub,
+            qr_tx,
+            mut qr_rx,
+            mut ta,
+            mut tb,
+        } = fixture_with_max_write(14);
+        let mut phone_link = tb.connect(Duration::ZERO).await.unwrap();
+        drop(tb);
+        let mut qr_rx = qr_rx.take().unwrap();
+        let keys = phone_keys();
+        let phone = tokio::spawn(async move {
+            let text = qr_rx.recv().await?;
+            let qr = PairingQr::parse(&text, unix_now()).ok()?;
+            let confirm = valid_confirm_for(&qr, &keys);
+            let bytes = crate::pairing::messages::encode_confirm_message(&confirm).ok()?;
+            let (frames, _) = split_message(&bytes, phone_link.max_write_len(), 0).ok()?;
+            assert!(
+                frames.len() >= 8,
+                "confirm must span enough frames to trickle"
+            );
+            for (index, frame) in frames.iter().enumerate() {
+                if index > 0 {
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                }
+                if phone_link.send(frame).await.is_err() {
+                    break;
+                }
+            }
+            Some(())
+        });
+
+        let mut ctx = CeremonyContext {
+            pc_id_secret: &signer,
+            pc_dh_pub,
+            pc_name: "dev-pc".into(),
+            service_uuid_bytes: crate::transport::ids::service_uuid_bytes(),
+            store: &store,
+            nonces: &mut nonces,
+        };
+        let result = run_pairing(
+            &mut ta,
+            &mut ctx,
+            CeremonyLimits {
+                qr_ttl: Duration::from_secs(60),
+                confirm_timeout: Duration::from_millis(125),
+                total_budget: Duration::from_secs(300),
+            },
+            &OsEntropy,
+            display_to(&qr_tx),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(PairingError::ConfirmTimedOut)),
+            "expected whole-operation timeout, got {result:?}"
+        );
+        assert_eq!(store.count().unwrap(), 0);
+        let _ = phone.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn queued_extra_application_message_is_rejected_and_nonce_is_burned() {
+        let FixtureParts {
+            _dir,
+            store,
+            mut nonces,
+            signer,
+            pc_dh_pub,
+            qr_tx,
+            mut qr_rx,
+            mut ta,
+            mut tb,
+        } = fixture_with_max_write(512);
+        let mut phone_link = tb.connect(Duration::ZERO).await.unwrap();
+        drop(tb);
+        let mut qr_rx = qr_rx.take().unwrap();
+        let keys = phone_keys();
+        let forced_nonce = [0x6D; 32];
+        let phone = tokio::spawn(async move {
+            let text = qr_rx.recv().await?;
+            let qr = PairingQr::parse(&text, unix_now()).ok()?;
+            let confirm = valid_confirm_for(&qr, &keys);
+            let confirm_bytes = crate::pairing::messages::encode_confirm_message(&confirm).ok()?;
+            let (confirm_frames, next_seq) =
+                split_message(&confirm_bytes, phone_link.max_write_len(), 0).ok()?;
+            let extra_bytes = encode(&WireMessage::Ping(crate::wire::message::Ping {
+                req_id: crate::wire::message::ReqId([0x91; 16]),
+                timestamp: 1_700_000_000,
+            }))
+            .ok()?;
+            let (extra_frames, _) =
+                split_message(&extra_bytes, phone_link.max_write_len(), next_seq).ok()?;
+
+            // Send one frame per Link chunk, like Android's BLE notifier.
+            // The PC must inspect chunks already queued when Confirm ends
+            // so a second application message cannot slip through.
+            for frame in confirm_frames.into_iter().chain(extra_frames) {
+                phone_link.send(&frame).await.ok()?;
+            }
+            Some(())
+        });
+
+        let mut ctx = CeremonyContext {
+            pc_id_secret: &signer,
+            pc_dh_pub,
+            pc_name: "dev-pc".into(),
+            service_uuid_bytes: crate::transport::ids::service_uuid_bytes(),
+            store: &store,
+            nonces: &mut nonces,
+        };
+        let result = run_pairing(
+            &mut ta,
+            &mut ctx,
+            CeremonyLimits::raw(60, 10, 300),
+            &FixedEntropy(forced_nonce.to_vec()),
+            display_to(&qr_tx),
+        )
+        .await;
+
+        assert!(matches!(result, Err(PairingError::GenericFailed)));
+        assert_eq!(store.count().unwrap(), 0);
+        assert!(
+            nonces.contains(&forced_nonce),
+            "complete invalid batch burns nonce"
+        );
+        assert_eq!(phone.await.unwrap(), Some(()));
+    }
+
+    #[tokio::test]
+    async fn pairing_decoder_rejects_trailing_cbor_and_burns_nonce() {
+        let FixtureParts {
+            _dir,
+            store,
+            mut nonces,
+            signer,
+            pc_dh_pub,
+            qr_tx,
+            mut qr_rx,
+            mut ta,
+            mut tb,
+        } = fixture();
+        let mut phone_link = tb.connect(Duration::ZERO).await.unwrap();
+        drop(tb);
+        let mut qr_rx = qr_rx.take().unwrap();
+        let keys = phone_keys();
+        let forced_nonce = [0x7E; 32];
+        let phone = tokio::spawn(async move {
+            let text = qr_rx.recv().await?;
+            let qr = PairingQr::parse(&text, unix_now()).ok()?;
+            let confirm = valid_confirm_for(&qr, &keys);
+            let mut bytes = crate::pairing::messages::encode_confirm_message(&confirm).ok()?;
+            bytes.push(0);
+            let (frames, _) = split_message(&bytes, phone_link.max_write_len(), 0).ok()?;
+            for frame in frames {
+                phone_link.send(&frame).await.ok()?;
+            }
+            Some(())
+        });
+
+        let mut ctx = CeremonyContext {
+            pc_id_secret: &signer,
+            pc_dh_pub,
+            pc_name: "dev-pc".into(),
+            service_uuid_bytes: crate::transport::ids::service_uuid_bytes(),
+            store: &store,
+            nonces: &mut nonces,
+        };
+        let result = run_pairing(
+            &mut ta,
+            &mut ctx,
+            CeremonyLimits::raw(60, 10, 300),
+            &FixedEntropy(forced_nonce.to_vec()),
+            display_to(&qr_tx),
+        )
+        .await;
+
+        assert!(matches!(result, Err(PairingError::GenericFailed)));
+        assert_eq!(store.count().unwrap(), 0);
+        assert!(nonces.contains(&forced_nonce));
+        assert_eq!(phone.await.unwrap(), Some(()));
     }
 
     #[tokio::test]
