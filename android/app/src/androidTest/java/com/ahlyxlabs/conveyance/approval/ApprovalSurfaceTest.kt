@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -79,8 +80,10 @@ class ApprovalSurfaceTest {
         compose.onNodeWithText("{\"environment\":\"production\",\"force\":false}")
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("release-client").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("New exact service and endpoint destination")
-            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("approval_tier_reason")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertTextContains("New exact service and endpoint destination")
     }
 
     @Test
@@ -155,8 +158,9 @@ class ApprovalSurfaceTest {
 
         val retryable = state as ApprovalState.AwaitingUserDecision
         assertEquals(ApprovalAuthStatus.CANCELLED, retryable.authStatus)
-        compose.onNodeWithTag("approve_button").assertIsDisplayed()
-        compose.onNodeWithText("Authentication was canceled. You may retry or deny.").assertIsDisplayed()
+        compose.onNodeWithTag("approve_button").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Authentication was canceled. You may retry or deny.")
+            .performScrollTo().assertIsDisplayed()
         compose.onAllNodesWithTag("approval_terminal").assertCountEquals(0)
     }
 
