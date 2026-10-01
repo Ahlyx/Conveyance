@@ -40,3 +40,7 @@ AGENTS.md
 # Phase exit reports: useful locally, kept out of the public history.
 PHASE_*_EXIT*.md
 AUDIT_PRE_PHASE_10.md
+
+# Internal project plans/specification are maintained locally, not in GitHub.
+/CONVEYANCE_PHASES.md
+/CONVEYANCE_SPEC.md

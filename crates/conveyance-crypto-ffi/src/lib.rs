@@ -43,6 +43,7 @@ pub mod hashchain;
 pub mod hkdf;
 pub mod kdf;
 pub mod noise;
+pub mod pairing;
 pub mod recovery;
 pub mod sealed;
 pub mod sign;
@@ -84,6 +85,33 @@ pub enum CryptoFfiError {
     InvalidJson,
     #[error("value outside the canonical-JSON domain")]
     OutsideCanonicalDomain,
+}
+
+/// Pairing failures have only the two specific QR messages permitted by
+/// the protocol. Every other validation/crypto failure has one UI-safe face.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum PairingFfiError {
+    #[error("incompatible protocol versions (found v{found}, expected v{expected})")]
+    IncompatibleVersion { found: u32, expected: u32 },
+    #[error("QR code expired -- generate a new one")]
+    QrExpired,
+    #[error("pairing failed")]
+    PairingFailed,
+}
+
+impl From<conveyance_pairing::PairingError> for PairingFfiError {
+    fn from(error: conveyance_pairing::PairingError) -> Self {
+        match error {
+            conveyance_pairing::PairingError::VersionMismatch { found, expected } => {
+                Self::IncompatibleVersion {
+                    found: u32::from(found),
+                    expected: u32::from(expected),
+                }
+            }
+            conveyance_pairing::PairingError::QrExpired => Self::QrExpired,
+            _ => Self::PairingFailed,
+        }
+    }
 }
 
 /// Map `conveyance-crypto`'s error onto the FFI error. One-to-one; every

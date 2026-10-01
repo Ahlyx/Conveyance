@@ -810,6 +810,7 @@ dependencies = [
  "ciborium",
  "conveyance-crypto",
  "conveyance-noise",
+ "conveyance-pairing",
  "conveyance-wire",
  "dirs",
  "futures-lite",
@@ -851,6 +852,7 @@ version = "0.1.0"
 dependencies = [
  "conveyance-crypto",
  "conveyance-noise",
+ "conveyance-pairing",
  "serde_json",
  "thiserror 2.0.20",
  "uniffi",
@@ -877,6 +879,18 @@ dependencies = [
  "conveyance-crypto",
  "serde_json",
  "snow",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "conveyance-pairing"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "ciborium",
+ "conveyance-crypto",
+ "qrcode",
+ "serde",
  "thiserror 2.0.20",
 ]
 
