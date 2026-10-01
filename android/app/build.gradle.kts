@@ -77,6 +77,7 @@ val commonRustInputs: Action<Exec> = Action {
     inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-crypto/src"))
     inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-noise/src"))
     inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-pairing"))
+    inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-protocol"))
     inputs.file(rustWorkspaceRoot.resolve("Cargo.lock"))
 }
 
@@ -210,6 +211,9 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
+    implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.biometric)
 
@@ -250,6 +254,9 @@ dependencies {
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.hilt.android.testing)
     kspAndroidTest(libs.hilt.compiler)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

@@ -1,0 +1,19 @@
+[package]
+name = "conveyance-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared typed Conveyance application protocol and approval binding"
+
+[dependencies]
+ciborium.workspace = true
+conveyance-crypto = { path = "../conveyance-crypto" }
+conveyance-pairing = { path = "../conveyance-pairing" }
+conveyance-wire = { path = "../conveyance-wire" }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+conveyance-crypto = { path = "../conveyance-crypto", features = ["test-support"] }
