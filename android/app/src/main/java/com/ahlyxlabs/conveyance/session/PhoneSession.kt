@@ -1,7 +1,9 @@
 package com.ahlyxlabs.conveyance.session
 
+import android.os.SystemClock
 import com.ahlyxlabs.conveyance.crypto.X25519PublicKey
 import com.ahlyxlabs.conveyance.storage.identity.UnlockedPhoneSession
+import com.ahlyxlabs.conveyance.approval.ApprovalSessionGuard
 import com.ahlyxlabs.conveyance.transport.framing.FramingException
 import com.ahlyxlabs.conveyance.transport.framing.InboundAssembler
 import com.ahlyxlabs.conveyance.transport.framing.MessageSplitter
@@ -33,6 +35,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.atomic.AtomicReference
+import java.util.UUID
 
 /**
  * Outer bound on the whole "start a session" operation — advertise, wait for
@@ -98,8 +101,23 @@ class PhoneSession internal constructor(
     private val params: SessionParams,
     private val noiseCrypto: NoiseSessionCrypto,
     private val dispatcher: CoroutineDispatcher,
+    val authenticatedPeer: AuthenticatedPeer? = null,
+    private val monotonicClock: SessionMonotonicClock = JvmSessionMonotonicClock,
     private val onEnded: (EndReason) -> Unit,
-) {
+) : ApprovalSessionGuard {
+
+    init {
+        require(
+            authenticatedPeer == null ||
+                authenticatedPeer.pcDhPub.contentEquals(pcStaticPublic.bytes),
+        ) { "displayed paired peer must match the Noise-authenticated static key" }
+    }
+
+    /** Unique even when a BLE reconnect reuses the same peer and identity. */
+    val sessionInstanceId: String = UUID.randomUUID().toString()
+
+    override fun isActive(): Boolean =
+        _state.value == SessionState.Active || _state.value == SessionState.IdleWarning
 
     private val identity get() = unlockedSession.identity
 
@@ -117,14 +135,15 @@ class PhoneSession internal constructor(
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
     /**
-     * Decrypted application plaintext, one message per emission, in order.
+     * Authenticated application plaintext with monotonic receipt metadata,
+     * one message per emission, in order.
      * **Single-consumer** (10.6/10.7). Completes when the session ends.
      * Collecting it back-pressures the inbound link loop — the consumer must
      * drain promptly, mirroring the daemon owner processing one chunk at a
      * time.
      */
-    private val inboundChannel = Channel<ByteArray>(Channel.BUFFERED)
-    val inbound: Flow<ByteArray> = inboundChannel.receiveAsFlow()
+    private val inboundChannel = Channel<AuthenticatedPlaintext>(Channel.BUFFERED)
+    val inbound: Flow<AuthenticatedPlaintext> = inboundChannel.receiveAsFlow()
 
     // ---- session state, confined to @SessionDispatcher ------------------
 
@@ -331,9 +350,15 @@ class PhoneSession internal constructor(
                         end(EndReason.ProtocolViolation)
                         return
                     }
+                    val receivedAtElapsedMs = monotonicClock.elapsedRealtimeMs()
                     recordActivity()
                     try {
-                        inboundChannel.send(plaintext)
+                        inboundChannel.send(
+                            AuthenticatedPlaintext(
+                                bytes = plaintext,
+                                receivedAtElapsedMs = receivedAtElapsedMs,
+                            ),
+                        )
                     } catch (e: ClosedSendChannelException) {
                         return // session ended under us
                     }
@@ -556,4 +581,24 @@ class PhoneSession internal constructor(
     // only as the subsequent BLE link drop -> PeerDisconnected.
     // EndReason.RemoteEnded stays unreachable until 10.6 wires WireMessage
     // dispatch.
+}
+
+/** Successfully decrypted application plaintext and its monotonic receipt time. */
+class AuthenticatedPlaintext internal constructor(
+    val bytes: ByteArray,
+    val receivedAtElapsedMs: Long,
+)
+
+fun interface SessionMonotonicClock {
+    fun elapsedRealtimeMs(): Long
+}
+
+/** JVM-safe clock for direct unit construction; production uses Android elapsed realtime. */
+object JvmSessionMonotonicClock : SessionMonotonicClock {
+    override fun elapsedRealtimeMs(): Long = System.nanoTime() / 1_000_000
+}
+
+/** Includes device sleep and shares the approval deadline timebase. */
+object AndroidSessionMonotonicClock : SessionMonotonicClock {
+    override fun elapsedRealtimeMs(): Long = SystemClock.elapsedRealtime()
 }

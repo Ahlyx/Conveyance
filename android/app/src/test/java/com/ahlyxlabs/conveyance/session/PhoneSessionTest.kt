@@ -394,7 +394,9 @@ class PhoneSessionTest {
         h.session.start()
 
         val got = mutableListOf<String>()
-        val collector = backgroundScope.launch { h.session.inbound.collect { got += String(it) } }
+        val collector = backgroundScope.launch {
+            h.session.inbound.collect { got += String(it.bytes) }
+        }
 
         h.pc.sendPlaintext("a".toByteArray())
         h.pc.sendPlaintext("bb".toByteArray())
@@ -419,7 +421,7 @@ class PhoneSessionTest {
         val up = ByteArray(500) { (it % 251).toByte() }
         val down = ByteArray(400) { ((it * 7) % 251).toByte() }
         val got = mutableListOf<ByteArray>()
-        backgroundScope.launch { h.session.inbound.collect { got += it } }
+        backgroundScope.launch { h.session.inbound.collect { got += it.bytes } }
 
         h.session.send(up)
         h.pc.sendPlaintext(down)

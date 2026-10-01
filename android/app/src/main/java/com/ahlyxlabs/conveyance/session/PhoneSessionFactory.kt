@@ -2,6 +2,7 @@ package com.ahlyxlabs.conveyance.session
 
 import com.ahlyxlabs.conveyance.crypto.X25519PublicKey
 import com.ahlyxlabs.conveyance.storage.identity.UnlockedPhoneSession
+import com.ahlyxlabs.conveyance.storage.pairings.PairingEntity
 import com.ahlyxlabs.conveyance.session.di.SessionDispatcher
 import com.ahlyxlabs.conveyance.transport.link.PhoneLink
 import javax.inject.Inject
@@ -47,6 +48,55 @@ class PhoneSessionFactory @Inject constructor(
         params = params,
         noiseCrypto = noiseCrypto,
         dispatcher = dispatcher,
+        monotonicClock = AndroidSessionMonotonicClock,
         onEnded = onEnded,
     )
+
+    /**
+     * Production approval sessions are constructed from a persisted pairing.
+     * Noise authenticates the paired X25519 static key; this same row supplies
+     * the trusted PC Ed25519 identity and display name to approval handling.
+     */
+    fun createForPairing(
+        unlockedSession: UnlockedPhoneSession,
+        pairing: PairingEntity,
+        link: PhoneLink,
+        params: SessionParams = SessionParams.specDefaults(),
+        onEnded: (EndReason) -> Unit,
+    ): PhoneSession {
+        require(pairing.pcIdPub.size == 32) { "paired PC identity key must be 32 bytes" }
+        require(pairing.pcDhPub.size == 32) { "paired PC static key must be 32 bytes" }
+        require(pairing.pcName.toByteArray(Charsets.UTF_8).size in 1..64) {
+            "paired PC name must be 1 to 64 UTF-8 bytes"
+        }
+        val staticPublic = X25519PublicKey(pairing.pcDhPub.copyOf())
+        return PhoneSession(
+            unlockedSession = unlockedSession,
+            pcStaticPublic = staticPublic,
+            link = link,
+            params = params,
+            noiseCrypto = noiseCrypto,
+            dispatcher = dispatcher,
+            monotonicClock = AndroidSessionMonotonicClock,
+            onEnded = onEnded,
+            authenticatedPeer = AuthenticatedPeer(
+                pcIdPub = pairing.pcIdPub,
+                pcDhPub = pairing.pcDhPub,
+                pcName = pairing.pcName,
+            ),
+        )
+    }
+}
+
+/** Immutable public identity/name associated with the Noise-authenticated peer. */
+class AuthenticatedPeer(
+    pcIdPub: ByteArray,
+    pcDhPub: ByteArray,
+    val pcName: String,
+) {
+    private val idBytes = pcIdPub.copyOf()
+    private val dhBytes = pcDhPub.copyOf()
+
+    val pcIdPub: ByteArray get() = idBytes.copyOf()
+    val pcDhPub: ByteArray get() = dhBytes.copyOf()
 }
