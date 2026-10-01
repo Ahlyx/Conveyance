@@ -6,6 +6,8 @@ import com.ahlyxlabs.conveyance.crypto.RecoveryPhrase
 import com.ahlyxlabs.conveyance.crypto.UniffiSealedIdentityCrypto
 import com.ahlyxlabs.conveyance.crypto.UnlockedIdentity
 import com.ahlyxlabs.conveyance.crypto.X25519PublicKey
+import com.ahlyxlabs.conveyance.storage.identity.Tier1AuthMethod
+import com.ahlyxlabs.conveyance.storage.identity.UnlockedPhoneSession
 import com.ahlyxlabs.conveyance.testutil.hexToBytes
 import com.ahlyxlabs.conveyance.transport.framing.Frame
 import com.ahlyxlabs.conveyance.transport.framing.InboundAssembler
@@ -115,6 +117,12 @@ class PhoneSessionRealNoiseTest {
             CONTENT_KEY,
         )
         val identity = sealedCrypto.openSealedIdentity(sealed.blob, CONTENT_KEY).getOrThrow()
+        val unlockedSession = UnlockedPhoneSession(
+            identity = identity,
+            authMethod = Tier1AuthMethod.BIOMETRIC,
+            generation = ByteArray(16),
+            vaultKey = CONTENT_KEY,
+        )
         val dispatcher = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "phone-session-real-noise-test")
         }.asCoroutineDispatcher()
@@ -123,7 +131,7 @@ class PhoneSessionRealNoiseTest {
         val ended = CompletableDeferred<EndReason>()
         val factory = PhoneSessionFactory(dispatcher, trackingCrypto)
         val session = factory.create(
-            identity = identity,
+            unlockedSession = unlockedSession,
             pcStaticPublic = X25519PublicKey(pc("x25519_public_hex")),
             link = phoneLink,
             onEnded = { ended.complete(it) },
@@ -135,7 +143,7 @@ class PhoneSessionRealNoiseTest {
                 identity.x25519PublicKey().bytes,
             ),
         )
-        return Harness(identity, dispatcher, session, trackingCrypto, pc, ended)
+        return Harness(unlockedSession, dispatcher, session, trackingCrypto, pc, ended)
     }
 
     private fun pc(key: String): ByteArray =
@@ -231,7 +239,7 @@ class PhoneSessionRealNoiseTest {
     }
 
     private class Harness(
-        private val identity: UnlockedIdentity,
+        private val unlockedSession: UnlockedPhoneSession,
         private val dispatcher: kotlinx.coroutines.ExecutorCoroutineDispatcher,
         val session: PhoneSession,
         private val crypto: TrackingRealNoiseCrypto,
@@ -256,7 +264,7 @@ class PhoneSessionRealNoiseTest {
             }
             pcJob?.cancelAndJoin()
             pc.close()
-            identity.close()
+            unlockedSession.close()
             dispatcher.close()
         }
     }
