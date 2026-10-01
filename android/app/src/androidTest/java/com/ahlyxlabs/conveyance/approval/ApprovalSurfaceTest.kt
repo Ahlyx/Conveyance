@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ahlyxlabs.conveyance.storage.identity.Tier1AuthMethod
 import org.junit.Assert.assertEquals
@@ -64,19 +65,22 @@ class ApprovalSurfaceTest {
             )
         }
 
-        compose.onNodeWithText("Paired PC").assertIsDisplayed()
-        compose.onNodeWithTag("approval_pc").assertIsDisplayed()
-        compose.onNodeWithTag("approval_request_id").assertIsDisplayed()
-        compose.onNodeWithTag("approval_op_type").assertIsDisplayed()
-        compose.onNodeWithTag("approval_service").assertIsDisplayed()
-        compose.onNodeWithTag("approval_method").assertIsDisplayed()
-        compose.onNodeWithTag("approval_endpoint").assertIsDisplayed()
-        compose.onNodeWithTag("approval_timestamp").assertIsDisplayed()
-        compose.onNodeWithTag("approval_params").assertIsDisplayed()
-        compose.onNodeWithText("/repos/acme/app/deployments?preview=false").assertIsDisplayed()
-        compose.onNodeWithText("{\"environment\":\"production\",\"force\":false}").assertIsDisplayed()
-        compose.onNodeWithText("release-client").assertIsDisplayed()
-        compose.onNodeWithText("New exact service and endpoint destination").assertIsDisplayed()
+        compose.onNodeWithText("Paired PC").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("approval_pc").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("approval_request_id").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("approval_op_type").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("approval_service").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("approval_method").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("approval_endpoint").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("approval_timestamp").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("approval_params").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("/repos/acme/app/deployments?preview=false")
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("{\"environment\":\"production\",\"force\":false}")
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("release-client").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("New exact service and endpoint destination")
+            .performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -96,8 +100,8 @@ class ApprovalSurfaceTest {
             )
         }
 
-        compose.onNodeWithTag("approve_button").performClick()
-        compose.onNodeWithTag("deny_button").performClick()
+        compose.onNodeWithTag("approve_button").performScrollTo().performClick()
+        compose.onNodeWithTag("deny_button").performScrollTo().performClick()
         val instanceId = (state as ApprovalState.AwaitingUserDecision).instanceId
         assertEquals(listOf(instanceId), approvals)
         assertEquals(listOf(instanceId), denials)
@@ -143,7 +147,7 @@ class ApprovalSurfaceTest {
             )
         }
 
-        compose.onNodeWithTag("approve_button").performClick()
+        compose.onNodeWithTag("approve_button").performScrollTo().performClick()
         assertTrue(state is ApprovalState.AwaitingAuthentication)
         assertEquals(0, authSubmissions)
         compose.onNodeWithTag("authenticate_button").assertIsNotEnabled()
@@ -196,8 +200,8 @@ class ApprovalSurfaceTest {
             )
         }
 
-        compose.onNodeWithTag("approve_button").performClick()
-        compose.onNodeWithTag("approve_button").performClick()
+        compose.onNodeWithTag("approve_button").performScrollTo().performClick()
+        compose.onNodeWithTag("approve_button").assertIsNotEnabled()
         assertEquals(1, approveIntents)
         assertTrue(state is ApprovalState.Committing)
     }
