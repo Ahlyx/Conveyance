@@ -537,6 +537,18 @@ mod tests {
                 req_id,
                 reason: "idle_timeout".into(),
             }),
+            WireMessage::PairingConfirm(crate::pairing::messages::PairingConfirm {
+                phone_id_pub: [1; 32],
+                phone_dh_pub: [2; 32],
+                signature: [3; 64],
+            }),
+            WireMessage::PairingAck(crate::pairing::messages::PairingAck {
+                nonce: [4; 32],
+                pc_id_pub: [5; 32],
+                phone_id_pub: [6; 32],
+                phone_dh_pub: [7; 32],
+                signature: [8; 64],
+            }),
         ];
 
         for msg in &msgs {
@@ -544,6 +556,38 @@ mod tests {
             let back = decode(&bytes).unwrap();
             assert_eq!(&back, msg);
         }
+    }
+
+    #[test]
+    fn shared_pairing_ffi_codec_matches_pc_wire_envelopes() {
+        let confirm = crate::pairing::messages::PairingConfirm {
+            phone_id_pub: [1; 32],
+            phone_dh_pub: [2; 32],
+            signature: [3; 64],
+        };
+        let confirm_wire = encode(&WireMessage::PairingConfirm(confirm.clone())).unwrap();
+        assert_eq!(
+            confirm_wire,
+            conveyance_pairing::encode_confirm_message(&confirm).unwrap()
+        );
+        assert_eq!(
+            decode(&confirm_wire).unwrap(),
+            WireMessage::PairingConfirm(confirm)
+        );
+
+        let ack = crate::pairing::messages::PairingAck {
+            nonce: [4; 32],
+            pc_id_pub: [5; 32],
+            phone_id_pub: [6; 32],
+            phone_dh_pub: [7; 32],
+            signature: [8; 64],
+        };
+        let ack_wire = encode(&WireMessage::PairingAck(ack.clone())).unwrap();
+        assert_eq!(
+            ack_wire,
+            conveyance_pairing::encode_ack_message(&ack).unwrap()
+        );
+        assert_eq!(decode(&ack_wire).unwrap(), WireMessage::PairingAck(ack));
     }
 
     #[test]

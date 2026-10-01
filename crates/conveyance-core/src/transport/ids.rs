@@ -17,9 +17,7 @@ pub const PHONE_TO_PC_TX_UUID: &str = "b4b10ea8-450c-47bd-93d9-065bb67e1bc9";
 
 /// Raw 16-byte form of [`SERVICE_UUID`] -- exactly what the QR payload's
 /// `ble_service_uuid` field carries (a UUID *is* 16 bytes).
-pub const SERVICE_UUID_BYTES: [u8; 16] = [
-    0x70, 0x90, 0x31, 0xfe, 0xab, 0xea, 0x43, 0x7f, 0x80, 0x1e, 0xdc, 0x68, 0x72, 0x72, 0x3b, 0x1f,
-];
+pub const SERVICE_UUID_BYTES: [u8; 16] = conveyance_pairing::SERVICE_UUID_BYTES;
 
 /// Convenience accessor matching the constant above.
 pub fn service_uuid_bytes() -> [u8; 16] {

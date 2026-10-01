@@ -526,7 +526,7 @@ async fn pair(name: Option<String>) -> Result<(), String> {
 
     let mut ctx = CeremonyContext {
         pc_id_secret: &signer,
-        pc_dh_pub: *identity.x25519_secret.expose(),
+        pc_dh_pub: identity.x25519_public_key(),
         pc_name: name.unwrap_or_else(hostname_fallback),
         service_uuid_bytes: conveyance_core::transport::ids::service_uuid_bytes(),
         store: &store,

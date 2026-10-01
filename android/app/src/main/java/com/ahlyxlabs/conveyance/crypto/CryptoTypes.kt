@@ -107,20 +107,6 @@ class RecoveryPhrase(private val phrase: String) {
     override fun toString(): String = "RecoveryPhrase(<redacted>)"
 }
 
-/** Both long-term identity keypairs derived from a [RecoveryPhrase]. */
-class IdentityKeys(
-    val ed25519Secret: Ed25519SecretKey,
-    val ed25519Public: Ed25519PublicKey,
-    val x25519Secret: X25519SecretKey,
-    val x25519Public: X25519PublicKey,
-) {
-    /** Wipe both secret scalars (best effort — see [CryptoException]). */
-    fun destroy() {
-        ed25519Secret.destroy()
-        x25519Secret.destroy()
-    }
-}
-
 /**
  * The domain-separation tag prepended to canonical JSON before signing.
  * The spec defines exactly these; more can be added as constants without

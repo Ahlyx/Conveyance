@@ -4,6 +4,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.ahlyxlabs.conveyance.testutil.hexToBytes
 import com.ahlyxlabs.conveyance.testutil.toHex
+import uniffi.conveyance_crypto_ffi.CryptoFfiException
+import uniffi.conveyance_crypto_ffi.recoveryPhraseToIdentity
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -157,16 +159,16 @@ class CryptoFixtureParityTest {
     fun recoveryDerivation() {
         val group = fixtures.getJSONObject("recovery")
         val c = group.getJSONArray("cases").getJSONObject(0)
-        val keys = crypto.deriveIdentity(RecoveryPhrase(c.getString("phrase")))
-        assertHex(c.getString("ed25519_secret_hex"), keys.ed25519Secret.bytes())
-        assertHex(c.getString("ed25519_public_hex"), keys.ed25519Public.bytes)
-        assertHex(c.getString("x25519_secret_hex"), keys.x25519Secret.bytes())
-        assertHex(c.getString("x25519_public_hex"), keys.x25519Public.bytes)
+        val keys = recoveryPhraseToIdentity(c.getString("phrase"))
+        assertHex(c.getString("ed25519_secret_hex"), keys.ed25519Secret)
+        assertHex(c.getString("ed25519_public_hex"), keys.ed25519Public)
+        assertHex(c.getString("x25519_secret_hex"), keys.x25519Secret)
+        assertHex(c.getString("x25519_public_hex"), keys.x25519Public)
 
         try {
-            crypto.deriveIdentity(RecoveryPhrase(group.getString("bad_phrase")))
+            recoveryPhraseToIdentity(group.getString("bad_phrase"))
             throw AssertionError("bad phrase should be rejected")
-        } catch (e: CryptoException.BadRecoveryPhrase) {
+        } catch (e: CryptoFfiException.BadRecoveryPhrase) {
             // expected
         }
     }

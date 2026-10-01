@@ -40,6 +40,8 @@ pub enum PairingError {
     #[error(transparent)]
     Protocol(#[from] crate::wire::ProtocolError),
     #[error(transparent)]
+    SharedProtocol(#[from] conveyance_pairing::PairingError),
+    #[error(transparent)]
     Crypto(#[from] crate::crypto::CryptoError),
     #[error(transparent)]
     Storage(#[from] crate::storage::StorageError),

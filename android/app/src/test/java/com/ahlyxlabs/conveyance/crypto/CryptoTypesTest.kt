@@ -71,16 +71,13 @@ class CryptoTypesTest {
     }
 
     @Test
-    fun identityKeysDestroyCascadesToBothSecrets() {
-        val keys = IdentityKeys(
-            ed25519Secret = Ed25519SecretKey(ByteArray(32) { 1 }),
-            ed25519Public = Ed25519PublicKey(ByteArray(32) { 2 }),
-            x25519Secret = X25519SecretKey(ByteArray(32) { 3 }),
-            x25519Public = X25519PublicKey(ByteArray(32) { 4 }),
-        )
-        keys.destroy()
-        assertThrows(IllegalStateException::class.java) { keys.ed25519Secret.bytes() }
-        assertThrows(IllegalStateException::class.java) { keys.x25519Secret.bytes() }
+    fun secretKeyWrappersCanBeDestroyed() {
+        val ed25519 = Ed25519SecretKey(ByteArray(32) { 1 })
+        val x25519 = X25519SecretKey(ByteArray(32) { 3 })
+        ed25519.destroy()
+        x25519.destroy()
+        assertThrows(IllegalStateException::class.java) { ed25519.bytes() }
+        assertThrows(IllegalStateException::class.java) { x25519.bytes() }
     }
 
     @Test

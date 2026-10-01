@@ -473,8 +473,6 @@ pub async fn run_with(config: DaemonConfig, deps: DaemonDeps) -> Result<(), Star
 /// carry neither.
 #[cfg(feature = "mock-phone")]
 pub async fn run_with_mock_phone(config: DaemonConfig) -> Result<(), StartupError> {
-    use conveyance_core::crypto::dh::DhSecret;
-
     let stores = refuse_to_start(&config)?;
 
     let swept = recovery::sweep_orphaned_requests(&stores.log).map_err(|e| StartupError::Open {
@@ -487,9 +485,7 @@ pub async fn run_with_mock_phone(config: DaemonConfig) -> Result<(), StartupErro
 
     // The mock phone needs the PC's DH static for KK -- exactly what a
     // real phone learns during pairing.
-    let pc_dh_pub = DhSecret::from_bytes(*stores.identity.x25519_secret.expose())
-        .public_key()
-        .to_bytes();
+    let pc_dh_pub = stores.identity.x25519_public_key();
     let phone = std::sync::Arc::new(mockphone::MockPhone::new(pc_dh_pub));
     phone
         .record_pairing(&stores.store)
@@ -747,9 +743,7 @@ pub(crate) mod test_support {
         tokio::spawn(mock_phone_task(
             phone_rx,
             Secret::from_bytes(phone_dh.to_bytes()),
-            DhSecret::from_bytes(*pc_identity.x25519_secret.expose())
-                .public_key()
-                .to_bytes(),
+            pc_identity.x25519_public_key(),
             params,
             phone_signer.clone(),
             ctl_rx,

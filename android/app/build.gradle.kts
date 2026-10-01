@@ -76,6 +76,7 @@ val commonRustInputs: Action<Exec> = Action {
     inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-crypto-ffi/src"))
     inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-crypto/src"))
     inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-noise/src"))
+    inputs.dir(rustWorkspaceRoot.resolve("crates/conveyance-pairing"))
     inputs.file(rustWorkspaceRoot.resolve("Cargo.lock"))
 }
 
@@ -210,6 +211,7 @@ dependencies {
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.biometric)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -235,6 +237,9 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.sqlite)
     implementation(libs.sqlcipher.android)
+
+    // Offline QR scanning; no Play Services or network download is needed.
+    implementation(libs.zxing.android.embedded)
 
     testImplementation(libs.junit)
     // Real org.json for the framing fixture-parity suite (android.jar's

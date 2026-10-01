@@ -27,6 +27,13 @@ impl InboundAssembler {
         Self::default()
     }
 
+    /// Whether the byte stream ends at an application-message boundary.
+    /// A false result means the last ingested bytes left a partial frame
+    /// or a partially reassembled application message.
+    pub fn is_idle(&self) -> bool {
+        self.buffer.is_empty() && self.framer.is_idle()
+    }
+
     /// Feed inbound bytes; returns every application message that
     /// completed on this call, in order. A frame that never completes is
     /// buffered for the next call; an over-cap length prefix is
@@ -88,6 +95,24 @@ mod tests {
             out.extend(asm.ingest(&[*b]).unwrap());
         }
         assert_eq!(out, vec![msg]);
+    }
+
+    #[test]
+    fn idle_reports_partial_frames_and_messages() {
+        let msg = vec![0x42u8; 10];
+        let (frames, _) = split_message(&msg, 4, 0).unwrap();
+        let mut asm = InboundAssembler::new();
+        assert!(asm.is_idle());
+        assert!(asm.ingest(&frames[0][..3]).unwrap().is_empty());
+        assert!(!asm.is_idle());
+        let mut result = asm.ingest(&frames[0][3..]).unwrap();
+        assert!(result.is_empty());
+        assert!(!asm.is_idle());
+        for frame in &frames[1..] {
+            result.extend(asm.ingest(frame).unwrap());
+        }
+        assert_eq!(result, vec![msg]);
+        assert!(asm.is_idle());
     }
 
     #[test]

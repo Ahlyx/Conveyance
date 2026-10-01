@@ -120,6 +120,20 @@ impl Link for MockLink {
         }
     }
 
+    fn try_recv(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        if self.closed {
+            return Err(TransportError::InvalidState("link shut down"));
+        }
+        match &mut self.rx {
+            Some(rx) => match rx.try_recv() {
+                Ok(chunk) => Ok(Some(chunk)),
+                Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+                Err(mpsc::error::TryRecvError::Disconnected) => Err(TransportError::Disconnected),
+            },
+            None => Err(TransportError::InvalidState("link shut down")),
+        }
+    }
+
     /// Close our send side AND drop our receive side. The peer observes
     /// Disconnected on its next recv; our own subsequent ops observe
     /// InvalidState. Dropping both channel halves is what makes this real.

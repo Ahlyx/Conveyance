@@ -13,10 +13,11 @@ import javax.inject.Singleton
 /**
  * Binds [ConveyanceCrypto] to its UniFFI-backed implementation.
  *
- * Consumers inject the interface; that they get [UniffiConveyanceCrypto]
- * today, and a Keystore-backed implementation in Phase 10.2, is settled
- * here and nowhere else. Singleton because the implementation is
- * stateless and the underlying native library loads once per process.
+ * Consumers inject the primitive and sealed-identity interfaces; their
+ * UniFFI implementations are bound here and nowhere else. Singleton
+ * because the adapters are stateless and the native library loads once
+ * per process. Identity keys remain in the sealed Rust handle, not these
+ * bindings' Kotlin objects.
  */
 @Module
 @InstallIn(SingletonComponent::class)

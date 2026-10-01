@@ -19,6 +19,7 @@ conveyance-wire = { path = "../conveyance-wire" }
 # drives the same `snow` through UniFFI; re-exported as
 # `conveyance_core::session::noise`, so the daemon is unchanged.
 conveyance-noise = { path = "../conveyance-noise" }
+conveyance-pairing = { path = "../conveyance-pairing", features = ["render"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true

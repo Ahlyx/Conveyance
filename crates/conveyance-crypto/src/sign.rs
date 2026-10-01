@@ -57,13 +57,15 @@ impl std::fmt::Debug for IdentitySecretKey {
 pub struct IdentityPublicKey(VerifyingKey);
 
 impl IdentityPublicKey {
-    /// Decode from 32 bytes. Fallible by nature: not every 32 bytes are
-    /// a valid curve point, which is why pairing inputs get rejected at
-    /// this boundary rather than deeper in the protocol.
+    /// Decode a non-small-order Ed25519 point from 32 bytes. Rejecting
+    /// weak points here prevents identity/small-order keys from entering
+    /// a signature check as peer identities.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, CryptoError> {
-        VerifyingKey::from_bytes(bytes)
-            .map(IdentityPublicKey)
-            .map_err(|_| CryptoError::BadKeyBytes)
+        let key = VerifyingKey::from_bytes(bytes).map_err(|_| CryptoError::BadKeyBytes)?;
+        if key.is_weak() {
+            return Err(CryptoError::BadKeyBytes);
+        }
+        Ok(IdentityPublicKey(key))
     }
 
     pub fn to_bytes(&self) -> [u8; 32] {
@@ -193,18 +195,20 @@ mod tests {
 
     #[test]
     fn invalid_public_key_bytes_are_rejected() {
-        // Empirically verified against ed25519-dalek 3.x: this encoding
-        // is not a decompressible curve point. Note the all-zeros
-        // encoding (the identity element) IS accepted by the crate --
-        // small-order/identity rejection is a protocol-layer concern
-        // here, handled by the peer-identity-mismatch check against the
-        // stored pairing, not by key decoding.
+        // This encoding is not a decompressible curve point.
         assert!(matches!(
             IdentityPublicKey::from_bytes(&{
                 let mut b = [0xffu8; 32];
                 b[31] = 0xfe;
                 b
             }),
+            Err(CryptoError::BadKeyBytes)
+        ));
+
+        // The identity element decompresses, but is not a usable identity
+        // key and must not be accepted as a verification key.
+        assert!(matches!(
+            IdentityPublicKey::from_bytes(&[0; 32]),
             Err(CryptoError::BadKeyBytes)
         ));
     }

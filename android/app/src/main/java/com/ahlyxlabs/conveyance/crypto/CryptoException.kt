@@ -14,15 +14,16 @@ package com.ahlyxlabs.conveyance.crypto
  *
  * ---
  *
- * ## Secret material and memory, in Phase 10.1
+ * ## Secret material and memory
  *
- * This adapter is a thin wrapper over a **stateless** Rust bridge. Key
- * bytes — the Ed25519 identity scalar, the Argon2id DEK, the derived
- * identity keys — cross the FFI boundary as `ByteArray` and therefore
- * live on the JVM heap. The JVM neither pins nor zeroes that memory: the
- * garbage collector may copy an array during a compaction, leaving the
- * old bytes behind in freed space until they are overwritten by
- * something else.
+ * Low-level primitive wrappers that accept caller-supplied secret bytes
+ * hold those values as JVM `ByteArray`s. The JVM neither pins nor zeroes
+ * that memory: the garbage collector may copy an array during a
+ * compaction, leaving the old bytes behind in freed space until they are
+ * overwritten. Production phone identity creation and signing instead
+ * use [SealedIdentityCrypto] and a Rust-owned [UnlockedIdentity] handle;
+ * private identity scalars do not cross that boundary. Raw phrase-derived
+ * scalars are exposed only by the debug `test-vectors` fixture bridge.
  *
  * The secret-bearing types here ([Ed25519SecretKey], [X25519SecretKey],
  * [DerivedKey], [AeadKey]) expose `destroy()`, which fills the *currently
@@ -32,13 +33,10 @@ package com.ahlyxlabs.conveyance.crypto
  * immutable, so its characters cannot be wiped at all; this is one reason
  * the spec says the phrase is never stored, only shown once.
  *
- * This is an accepted limitation of the 10.1 primitives surface, recorded
- * here, on [ConveyanceCrypto], and in the phase report. Because
- * [ConveyanceCrypto] is an interface, Phase 10.2 can move secret handling
- * into Rust-owned, Android-Keystore-backed handle objects — where the
- * plaintext never enters the JVM heap — without changing a single call
- * site. The honesty posture matches auditmcp's about the limits of
- * zeroization.
+ * [Secret.destroy] is best-effort for these low-level wrappers. It does
+ * not affect the production identity path, whose scalars remain inside
+ * Rust-owned zeroizing memory and are wiped when [UnlockedIdentity.close]
+ * is called.
  */
 sealed class CryptoException(message: String, cause: Throwable? = null) :
     Exception(message, cause) {

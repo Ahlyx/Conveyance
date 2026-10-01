@@ -19,7 +19,6 @@ import uniffi.conveyance_crypto_ffi.hashChainGenesisPrevHash
 import uniffi.conveyance_crypto_ffi.hashChainRowHash
 import uniffi.conveyance_crypto_ffi.hashChainVerify
 import uniffi.conveyance_crypto_ffi.hkdfBlake2s as ffiHkdfBlake2s
-import uniffi.conveyance_crypto_ffi.recoveryPhraseToIdentity
 import uniffi.conveyance_crypto_ffi.signingPayload as ffiSigningPayload
 
 /**
@@ -36,19 +35,6 @@ class UniffiConveyanceCrypto @Inject constructor() : ConveyanceCrypto {
 
     override fun generateRecoveryPhrase(): RecoveryPhrase =
         RecoveryPhrase(guard { ffiGenerateRecoveryPhrase() })
-
-    // The interface method is @RestrictTo(TESTS); implementing it is not
-    // "calling" it, but lint's RestrictedApi check flags the override too.
-    @Suppress("RestrictedApi")
-    override fun deriveIdentity(phrase: RecoveryPhrase): IdentityKeys {
-        val k = guard { recoveryPhraseToIdentity(phrase.raw()) }
-        return IdentityKeys(
-            ed25519Secret = Ed25519SecretKey(k.ed25519Secret),
-            ed25519Public = Ed25519PublicKey(k.ed25519Public),
-            x25519Secret = X25519SecretKey(k.x25519Secret),
-            x25519Public = X25519PublicKey(k.x25519Public),
-        )
-    }
 
     override fun signingPayload(context: SigningContext, canonicalBody: String): ByteArray =
         guard { ffiSigningPayload(context.bytes, canonicalBody) }

@@ -13,11 +13,9 @@ hardware the agent process cannot reach, and every use requires explicit human
 action on that hardware. A compromised machine cannot exfiltrate what it never
 had.
 
-The full design contract — threat model, wire protocol, state machines, fixed
-cryptographic choices — is [CONVEYANCE_SPEC.md](CONVEYANCE_SPEC.md), and
-[CONVEYANCE_PHASES.md](CONVEYANCE_PHASES.md) breaks v1 into implementation
-phases. Those two files are the source of truth. This README describes what
-currently exists, not what is planned as if it existed.
+The detailed design contract and phase plan are maintained locally and are
+not included in this repository. This README describes what currently exists,
+not what is planned as if it existed.
 
 ## Why this exists
 
@@ -45,9 +43,10 @@ agent never saw them.
 
 ## What state is it in?
 
-PC-side v1 is complete: phases 0 through 9 of the implementation plan are done.
-The Android app — phase 10 — has not been started. That split defines
-everything else in this section.
+PC-side v1 is complete: phases 0 through 9 are done. The Android app has
+completed its protocol, storage, BLE, and Noise foundations and now includes
+the phone-side pairing ceremony. Approval UI and request execution remain
+future work.
 
 ### Working
 
@@ -120,17 +119,14 @@ everything else in this section.
 
 ### Not yet built
 
-- **The Android app (phase 10)** — **scaffolding only** (`android/`). An empty
-  Kotlin/Compose app with Hilt wired, a splash screen, a placeholder screen,
-  and its own CI workflow (`android.yml`): it builds and launches and does
-  nothing else. None of the phone side exists yet — no crypto, storage, BLE,
-  Noise, pairing, credential store, approval UI, or auth flows. minSdk 30;
-  package `com.ahlyxlabs.conveyance`. Toolchain versions live in
-  `android/gradle/libs.versions.toml`.
-- **Real-hardware pairing.** Pairing is verified against the mock phone only;
-  pairing a physical phone waits for the rest of phase 10.
-- iOS, SSH/git signing adapters, multi-device, multi-user policies — later
-  roadmap phases (see Roadmap).
+- **Approval and request handling** — the phone cannot yet display requests,
+  collect approval, or execute authenticated HTTP requests. Credential
+  management, foreground-service behavior, and app polish also remain.
+- **Phone-to-PC pairing on hardware.** The PC ceremony is verified against a
+  mock phone, but the new Android flow has not yet paired with a PC over a
+  physical BLE connection. Phase 11 includes that end-to-end hardware check.
+- iOS, SSH/git signing adapters, multi-device, and multi-user policies remain
+  later roadmap work.
 
 ### Verification status, stated precisely
 
@@ -233,7 +229,7 @@ other MCP clients take the equivalent shape):
 
 On Windows point `command` at `conveyance.exe`.
 
-### Android app (phase 10, scaffolding)
+### Android app
 
 The phone side lives in `android/` as a standalone Gradle project. It needs
 JDK 17 and the Android SDK; the Gradle version is pinned via the wrapper.
@@ -243,22 +239,18 @@ cd android
 ./gradlew lintDebug testDebugUnitTest assembleDebug
 ```
 
-It currently builds an empty app that opens to a placeholder screen. Nothing
-below the UI is implemented.
+The app supports first-run identity setup, QR scanning, BLE pairing, and a
+local list of paired PCs. The command above builds it; Android CI also runs the
+instrumented storage and protocol suites.
 
-**Be clear about what this gets you today:** pairing requires scanning the QR
-with the Conveyance phone app, which does not exist yet. Until phase 10 ships,
-v1 is useful as a spec-and-substrate demonstration, not for day-to-day secret
-gating. The complete flow can be exercised end-to-end through a real MCP client
-against a scripted auto-approving phone — build with `--features mock-phone`
-and run `conveyance daemon --mock-phone`; the flag refuses to start in builds
-without the feature rather than pretending — but a real phone approving real
-requests is future work, stated here rather than implied away.
+**Be clear about what this gets you today:** pairing is implemented, but the
+phone does not yet display approval requests or execute them. The PC-side mock
+phone remains the way to exercise the complete request flow end-to-end.
 
 ## Threat model
 
-[The spec's threat model section](CONVEYANCE_SPEC.md#threat-model) is
-authoritative; this is the two-sentence version. The primary defense is that a
+The project threat model is maintained in its design documentation; this is
+the two-sentence version. The primary defense is that a
 fully compromised PC — kernel malware, persistent implant, root — cannot
 extract stored secrets, forge an approval, or cause an authenticated request to
 execute without a physical tap, because secrets and approval authority live on
@@ -297,14 +289,15 @@ justify.
 
 ## Roadmap
 
-[CONVEYANCE_PHASES.md](CONVEYANCE_PHASES.md) holds the phased breakdown with
-exit criteria per phase. In short:
+The remaining work is approval, request execution, and end-to-end hardware
+validation. In short:
 
 | Phases | Scope | Status |
 |--------|-------|--------|
 | 0–9 | PC side: crypto, storage, sessions, wire protocol, BLE, pairing, daemon, shim, CLI | Complete |
-| 10.x | Android app (Kotlin): peripheral role, approval UI, credential store, recovery flows | Not started |
-| 11 | Real-hardware end-to-end integration, cross-platform verification | Blocked on 10 |
+| 10.0–10.5 | Android app: crypto, storage, BLE, Noise, and pairing | Complete |
+| 10.6–10.10 | Approval UI, request executor, foreground service, and app polish | Not started |
+| 11 | Real-hardware end-to-end integration, cross-platform verification | Pending physical BLE validation |
 
 After v1: signing adapters (SSH agent and git commit signing over the same
 substrate — phone holds keys, phone signs on approval), then iOS, then
@@ -314,11 +307,9 @@ No dates are attached to any of this, deliberately.
 
 ## Contributing
 
-[CONVEYANCE_SPEC.md](CONVEYANCE_SPEC.md) is the source of truth for design
-decisions; when the spec conflicts with instinct, the spec wins. This is a
-security project: changes to cryptographic primitives, wire formats, or state
-machines require a spec amendment committed before (or alongside) the code that
-implements them. Security-critical code lands test-first. Documentation should
+This is a security project: changes to cryptographic primitives, wire formats,
+or state machines require maintainer review and corresponding design updates.
+Security-critical code lands test-first. Documentation should
 explain why, acknowledge limitations precisely, and skip marketing prose —
 matching the voice of [auditmcp](https://github.com/Ahlyx/auditmcp), the
 companion project whose hash-chain format the logs intentionally share.

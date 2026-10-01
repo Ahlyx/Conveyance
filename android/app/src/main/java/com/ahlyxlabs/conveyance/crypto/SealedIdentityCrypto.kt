@@ -9,9 +9,9 @@ package com.ahlyxlabs.conveyance.crypto
  * `identity.enc` blob and the public keys come back. [openSealedIdentity]
  * returns an opaque [UnlockedIdentity] handle backed by a Rust-owned
  * object; the scalars live in native `Zeroizing` memory and are wiped
- * when the handle is closed. This is the Phase 10.2 upgrade over the
- * stateless [ConveyanceCrypto], whose `deriveIdentity` (retained only for
- * cross-implementation verification) returns raw key bytes.
+ * when the handle is closed. The raw phrase-derivation bridge is enabled
+ * only in the debug `test-vectors` build for parity tests; it is absent
+ * from release bindings.
  *
  * `openSealedIdentity` and `openCredential` return `Result`: a wrong
  * content key or a tampered blob is [CryptoException.DecryptionFailed],

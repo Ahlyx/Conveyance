@@ -5,6 +5,7 @@ members = [
     "crates/conveyance-crypto-ffi",
     "crates/conveyance-wire",
     "crates/conveyance-noise",
+    "crates/conveyance-pairing",
     "crates/conveyance-core",
     "crates/conveyance-daemon",
     "crates/conveyance-shim",

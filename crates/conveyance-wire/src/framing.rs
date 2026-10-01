@@ -197,6 +197,11 @@ impl Framer {
         }
     }
 
+    /// Whether no application message is currently being reassembled.
+    pub(crate) fn is_idle(&self) -> bool {
+        matches!(self.progress, Progress::Idle) && self.buffer.is_empty()
+    }
+
     /// Feed raw bytes from the wire. Returns `Some(message)` when a full
     /// application message completed (END frame received).
     pub fn ingest(&mut self, frame_bytes: &[u8]) -> Result<Option<Vec<u8>>, FrameError> {

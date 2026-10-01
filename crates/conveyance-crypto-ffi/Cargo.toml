@@ -17,6 +17,7 @@ conveyance-crypto = { path = "../conveyance-crypto" }
 # UniFFI object; the phone's X25519 static is read from the
 # `UnlockedIdentity` handle (same crate) and never crosses back out.
 conveyance-noise = { path = "../conveyance-noise" }
+conveyance-pairing = { path = "../conveyance-pairing" }
 # Canonical-JSON input crosses the FFI boundary as a JSON string; this
 # crate parses it to a `serde_json::Value` before handing it to
 # `conveyance-crypto`, exactly mirroring the PC side's parse-then-
