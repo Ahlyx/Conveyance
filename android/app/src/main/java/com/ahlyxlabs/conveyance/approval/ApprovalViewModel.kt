@@ -47,8 +47,26 @@ class ApprovalViewModel @Inject constructor(
         _authMethod.value = next.tier1AuthMethod
 
         viewModelScope.launch {
-            launch { next.state.collect { _state.value = it } }
-            launch { next.authPrompts.collect { authEffects.send(it) } }
+            launch {
+                next.state.collect { nextState ->
+                    // A replaced runtime's StateFlow remains collectable after
+                    // close. Serialize this check with attach() so an old
+                    // session can never overwrite the current UI state.
+                    synchronized(this@ApprovalViewModel) {
+                        if (runtime === next) _state.value = nextState
+                    }
+                }
+            }
+            launch {
+                next.authPrompts.collect { prompt ->
+                    // The host also validates request/session/attempt ids;
+                    // avoid forwarding stale prompts in the first place.
+                    val stillCurrent = synchronized(this@ApprovalViewModel) {
+                        runtime === next
+                    }
+                    if (stillCurrent) authEffects.send(prompt)
+                }
+            }
         }
         if (!next.start()) {
             next.close()
