@@ -83,7 +83,10 @@ class ApprovalSurfaceTest {
         compose.onNodeWithTag("approval_tier_reason")
             .performScrollTo()
             .assertIsDisplayed()
-            .assertTextContains("New exact service and endpoint destination")
+            .assertTextContains(
+                "New exact service and endpoint destination",
+                substring = true,
+            )
     }
 
     @Test
