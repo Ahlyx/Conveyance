@@ -342,7 +342,7 @@ class MainActivity : FragmentActivity() {
                     .getOrDefault(Tier1AuthMethod.BIOMETRIC)
                 screen = AppScreen.ChangeProtection(
                     method = method,
-                    error = "Could not change identity protection. Check authentication and try again.",
+                    error = "Could not change the protection method. Check authentication and try again.",
                 )
             } finally {
                 identityActionInFlight = false
@@ -388,7 +388,7 @@ private fun HomeScreen(
         } else {
             Button(onClick = onScan) { Text("Pair with PC") }
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onChangeProtection) { Text("Change identity protection") }
+            TextButton(onClick = onChangeProtection) { Text("Change protection method") }
         }
         Spacer(Modifier.height(24.dp))
         Text("Paired PCs", style = MaterialTheme.typography.titleLarge)
@@ -530,7 +530,7 @@ private fun Tier1ChangeScreen(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Change identity protection", style = MaterialTheme.typography.headlineSmall)
+        Text("Change protection method", style = MaterialTheme.typography.headlineSmall)
         Text("Re-enter the current method before applying a protection change.")
         if (currentMethod == Tier1AuthMethod.PASSPHRASE) {
             ExactPassphraseField("Current passphrase", currentPassphrase) { currentPassphrase = it }

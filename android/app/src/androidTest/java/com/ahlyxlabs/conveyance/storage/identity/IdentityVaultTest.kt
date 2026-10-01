@@ -88,7 +88,7 @@ class IdentityVaultTest {
     }
 
     @Test
-    fun changingMethodReauthenticatesAndLeavesCredentialDekUsable() = runBlocking {
+    fun changingProtectionMethodRewrapsSameVaultKeyWithoutAntiRollback() = runBlocking {
         fixture.vault.createFromPhrase(
             RecoveryPhrase(TEST_PHRASE),
             Tier1AuthInput.Biometric(FakeBiometricGate()),
@@ -96,6 +96,8 @@ class IdentityVaultTest {
         val initial = fixture.vault.unlock(Tier1AuthInput.Biometric(FakeBiometricGate())).getOrThrow()
         fixture.credentialStore.add("example", "secret".toByteArray(), initial)
         initial.close()
+        val previousIdentitySnapshot = identityFile().readBytes()
+        val previousContainer = IdentityContainer.decode(previousIdentitySnapshot)
 
         val newPassphrase = "método exacto".toByteArray(Charsets.UTF_8)
         fixture.vault.changeAuthMethod(
@@ -104,6 +106,10 @@ class IdentityVaultTest {
         ).getOrThrow()
         newPassphrase.fill(0)
         assertEquals(Tier1AuthMethod.PASSPHRASE, fixture.vault.configuredAuthMethod())
+        val changedContainer = IdentityContainer.decode(identityFile().readBytes())
+        assertArrayEquals(previousContainer.generation, changedContainer.generation)
+        assertArrayEquals(previousContainer.sealedBlob, changedContainer.sealedBlob)
+        assertFalse(previousContainer.wrappedContentKey.contentEquals(changedContainer.wrappedContentKey))
 
         val passphrase = "método exacto".toByteArray(Charsets.UTF_8)
         val changed = fixture.vault.unlock(Tier1AuthInput.Passphrase(passphrase)).getOrThrow()
@@ -112,6 +118,20 @@ class IdentityVaultTest {
             assertArrayEquals("secret".toByteArray(), opened.bytes())
         }
         changed.close()
+
+        // V1 intentionally has no anti-rollback anchor: restoring an older,
+        // valid envelope restores its previous method and the same vault key.
+        identityFile().writeBytes(previousIdentitySnapshot)
+        assertEquals(Tier1AuthMethod.BIOMETRIC, fixture.vault.configuredAuthMethod())
+        val restored = fixture.vault.unlock(Tier1AuthInput.Biometric(FakeBiometricGate())).getOrThrow()
+        try {
+            fixture.credentialStore.open("example", restored).getOrThrow().use { opened ->
+                assertArrayEquals("secret".toByteArray(), opened.bytes())
+            }
+        } finally {
+            restored.close()
+            previousIdentitySnapshot.fill(0)
+        }
     }
 
     @Test
