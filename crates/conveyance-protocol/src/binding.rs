@@ -213,6 +213,38 @@ mod tests {
     }
 
     #[test]
+    fn method_case_is_preserved_in_binding_and_execute_comparison() {
+        let mut req = request(2, "/v1/deploy", serde_json::json!({"env": "prod"}));
+        req.method = "delete".into();
+        let canonical = req.canonical_binding_json().unwrap();
+        assert!(canonical.contains("\"method\":\"delete\""));
+        assert!(!canonical.contains("\"method\":\"DELETE\""));
+
+        let response =
+            ApprovalResponse::approved_or_denied(req.req_id, Decision::Approved, None, &key());
+        let mut exact_tracker = ApprovedRequestTracker::new();
+        exact_tracker.record_approval(&req, &response).unwrap();
+        assert!(
+            exact_tracker
+                .validate_execute(&matching_execute(&req))
+                .is_ok()
+        );
+
+        let mut changed_case_tracker = ApprovedRequestTracker::new();
+        changed_case_tracker
+            .record_approval(&req, &response)
+            .unwrap();
+        let mut changed_case_execute = matching_execute(&req);
+        changed_case_execute.method = "DELETE".into();
+        assert!(matches!(
+            changed_case_tracker.validate_execute(&changed_case_execute),
+            Err(ProtocolError::ApprovalMismatch {
+                cause: super::super::MismatchCause::PayloadDiffers,
+            })
+        ));
+    }
+
+    #[test]
     fn every_field_mismatch_is_detected_individually() {
         type Mutation = Box<dyn Fn(&mut ApprovalRequest)>;
         // One mutation per field; each must fail with PayloadDiffers.

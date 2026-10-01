@@ -78,7 +78,11 @@ impl PhoneApprovalPolicy {
         Ok(())
     }
 
-    /// Apply built-in and phone-owned rules using exact protocol strings.
+    /// Apply built-in and phone-owned rules without changing protocol values.
+    /// The built-in DELETE check is ASCII case-insensitive so method casing
+    /// cannot bypass high-risk classification. Request values remain exact
+    /// for display, signing, and approval/execute binding. Configured glob
+    /// rules and destination history use exact protocol strings.
     /// `recent_approvals` must contain successful approvals newest first;
     /// only its first 30 rows participate in novelty classification.
     pub fn evaluate(
@@ -87,7 +91,7 @@ impl PhoneApprovalPolicy {
         recent_approvals: &[ApprovedDestination],
     ) -> ApprovalTierDecision {
         let mut reasons = Vec::new();
-        if request.method == "DELETE" {
+        if request.method.eq_ignore_ascii_case("DELETE") {
             reasons.push(Tier3Reason::DeleteMethod);
         }
 
@@ -220,6 +224,21 @@ mod tests {
                 .tier,
             3
         );
+    }
+
+    #[test]
+    fn delete_method_case_variants_require_tier_three_without_mutation() {
+        let policy = PhoneApprovalPolicy::default();
+        let history = [dest("svc", "/known")];
+
+        for method in ["DELETE", "delete", "Delete"] {
+            let req = request("svc", method, "/known");
+            let decision = policy.evaluate(&req, &history);
+
+            assert_eq!(req.method, method, "policy must preserve the request value");
+            assert_eq!(decision.tier, 3, "{method} must require Tier 3");
+            assert_eq!(decision.reasons, vec![Tier3Reason::DeleteMethod]);
+        }
     }
 
     #[test]
