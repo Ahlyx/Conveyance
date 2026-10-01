@@ -181,7 +181,9 @@ class ApprovalSurfaceTest {
             )
         }
         compose.onNodeWithTag("approval_terminal").assertIsDisplayed()
-        compose.onNodeWithText("Request expired. No approval was sent.").assertIsDisplayed()
+        compose.onNodeWithText(
+            "Request expired. An expiration response was sent to the paired PC."
+        ).assertIsDisplayed()
         compose.onAllNodesWithTag("approve_button").assertCountEquals(0)
         compose.onAllNodesWithTag("deny_button").assertCountEquals(0)
     }

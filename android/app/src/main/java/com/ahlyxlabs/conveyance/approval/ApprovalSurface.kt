@@ -182,7 +182,7 @@ private fun ApprovalTerminalSurface(
     val message = when (state) {
         is ApprovalState.Approved -> "Approval sent to the paired PC."
         is ApprovalState.Denied -> "Request denied and the decision was sent."
-        is ApprovalState.Expired -> "Request expired. No approval was sent."
+        is ApprovalState.Expired -> "Request expired. An expiration response was sent to the paired PC."
         is ApprovalState.SessionLost -> "Session ended. This request can no longer be approved."
         is ApprovalState.Cancelled -> "Approval was canceled."
         is ApprovalState.Failed -> state.safeMessage
