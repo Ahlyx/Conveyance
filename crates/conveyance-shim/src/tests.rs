@@ -2,7 +2,6 @@
 //! daemon (mock-phone feature) so every assertion crosses the full
 //! IPC + Noise + log stack, not a mock of it.
 
-use conveyance_core::crypto::dh::DhSecret;
 use conveyance_core::session::SessionParams;
 use conveyance_core::storage::identity::StoredIdentity;
 use conveyance_daemon::ipc::IpcRequest;
@@ -47,9 +46,7 @@ async fn spawn_mock_daemon(tag: &str) -> (tempfile::TempDir, DaemonConfig) {
 
     // The phone needs the PC's DH static for KK -- same pairing-time
     // dependency the ceremony satisfies.
-    let pc_dh_pub = DhSecret::from_bytes(*stores.identity.x25519_secret.expose())
-        .public_key()
-        .to_bytes();
+    let pc_dh_pub = stores.identity.x25519_public_key();
     let phone = Arc::new(MockPhone::new(pc_dh_pub));
     phone.record_pairing(stores.store.as_ref()).unwrap();
 

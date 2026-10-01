@@ -37,9 +37,8 @@ class IdentityVaultTest {
 
     private val context: Context =
         InstrumentationRegistry.getInstrumentation().targetContext
-    private val sealed: SealedIdentityCrypto = UniffiSealedIdentityCrypto()
     private val crypto: ConveyanceCrypto = UniffiConveyanceCrypto()
-
+    private val sealed: SealedIdentityCrypto = UniffiSealedIdentityCrypto()
     private val vault = IdentityVault(context, sealed, StubTier1KeyProvider())
 
     private val zeros =
@@ -62,12 +61,6 @@ class IdentityVaultTest {
         assertTrue(vault.exists())
         assertEquals(1, gate.calls)
         assertEquals(AuthPurpose.UNLOCK_IDENTITY, gate.lastPurpose)
-
-        // Public keys match the raw (test-only) derivation for the phrase.
-        val raw = crypto.deriveIdentity(RecoveryPhrase(zeros))
-        assertArrayEquals(raw.ed25519Public.bytes, pub.ed25519.bytes)
-        assertArrayEquals(raw.x25519Public.bytes, pub.x25519.bytes)
-        raw.destroy()
 
         vault.unlock(FakeBiometricGate()).getOrThrow().use { id ->
             assertArrayEquals(pub.ed25519.bytes, id.ed25519PublicKey().bytes)

@@ -6,22 +6,27 @@
 //! for generating a raw Ed25519/X25519 scalar directly — the phone never
 //! has identity keys that did not come from a phrase.
 //!
-//! [`recovery_phrase_to_identity`] is the security-critical spine: it must
-//! produce byte-identical keys to any other implementation of the same
-//! phrase. Every step is pinned in `conveyance_crypto::recovery` (BIP-39
-//! PBKDF2-HMAC-SHA512 with an **empty** passphrase per spec, then
-//! HKDF-BLAKE2s with zero salt and the two exact info strings); this
-//! bridge only marshals bytes.
+//! Production identity creation uses the sealed-identity bridge and never
+//! returns the derived scalars. `recovery_phrase_to_identity` exists only
+//! in Rust tests and the Android debug `test-vectors` build, where fixture
+//! parity checks the derivation against Kotlin. Every derivation step is
+//! pinned in `conveyance_crypto::recovery` (BIP-39 PBKDF2-HMAC-SHA512 with
+//! an **empty** passphrase, then HKDF-BLAKE2s with zero salt and the two
+//! exact info strings).
 
 use crate::{CryptoFfiError, map_core_err};
-use conveyance_crypto::dh::DhSecret;
 use conveyance_crypto::recovery::RecoveryPhrase;
+
+#[cfg(any(test, feature = "test-vectors"))]
+use conveyance_crypto::dh::DhSecret;
+#[cfg(any(test, feature = "test-vectors"))]
 use conveyance_crypto::sign::IdentitySecretKey;
 
 /// Both long-term identity keypairs derived from one recovery phrase, as
 /// raw 32-byte scalars and public keys. The BIP-39 seed itself is not
 /// returned: nothing on the phone consumes it, and it is one more piece
 /// of secret material with no reason to cross the boundary.
+#[cfg(any(test, feature = "test-vectors"))]
 #[derive(uniffi::Record)]
 pub struct IdentityKeys {
     pub ed25519_secret: Vec<u8>,
@@ -41,6 +46,7 @@ pub fn generate_recovery_phrase() -> Result<String, CryptoFfiError> {
 /// Validate a recovery phrase (BIP-39 checksum) and derive both identity
 /// keypairs. Wrong word count, unknown words, and bad checksum all collapse
 /// into [`CryptoFfiError::BadRecoveryPhrase`] — no parsing oracle.
+#[cfg(any(test, feature = "test-vectors"))]
 #[uniffi::export]
 pub fn recovery_phrase_to_identity(phrase: String) -> Result<IdentityKeys, CryptoFfiError> {
     let phrase = RecoveryPhrase::from_words(&phrase).map_err(map_core_err)?;

@@ -20,14 +20,13 @@
 //!   lets the JSON fixture cross-check (emitted by `conveyance-crypto`,
 //!   asserted from Kotlin) be a straight table comparison.
 //!
-//! * **Stateless.** Key material crosses the boundary as `Vec<u8>`; this
-//!   crate holds no state and owns no handles. That means secret bytes
-//!   (Ed25519 scalar, Argon2id DEK, derived identity keys) enter the JVM
-//!   heap as `ByteArray`, where they are GC-managed and not zeroized — a
-//!   real limitation for Phase 10.1, documented on the Kotlin adapter and
-//!   in the phase report. The Kotlin API is an interface so Phase 10.2 can
-//!   move secret handling to Rust-owned, Keystore-backed handles without
-//!   touching call sites.
+//! * **Identity secrets stay in Rust.** Production phone identity
+//!   creation, unlocking, and signing use the opaque `UnlockedIdentity`
+//!   handle; private identity bytes do not cross into the JVM. The raw
+//!   phrase-to-key export exists only for Rust tests and the Android debug
+//!   `test-vectors` build. Low-level primitive exports still accept byte
+//!   slices where their callers need them, but they are not the production
+//!   identity lifecycle.
 //!
 //! * **No panic crosses the ABI.** A panic unwinding into the generated C
 //!   ABI aborts the process on the phone. Every fallible-at-the-boundary

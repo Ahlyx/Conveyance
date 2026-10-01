@@ -3,18 +3,17 @@ package com.ahlyxlabs.conveyance.crypto
 /**
  * The phone side's cryptographic primitives, as a stable Kotlin API.
  *
- * Every operation is a pure function of its inputs. The Phase 10.1
- * implementation ([UniffiConveyanceCrypto]) delegates to
- * `conveyance-crypto` through a stateless UniFFI bridge, so the same
- * bytes come out here as on the PC daemon — that cross-implementation
- * agreement is the whole point of sharing the Rust crate, and it is
- * pinned by the fixture parity suite in CI.
+ * Primitive operations are delegated to `conveyance-crypto` through
+ * UniFFI, so the same bytes come out here as on the PC daemon — that
+ * cross-implementation agreement is pinned by the fixture parity suite
+ * in CI. Long-term phone identity creation and signing use
+ * [SealedIdentityCrypto] and its opaque Rust-owned [UnlockedIdentity]
+ * handle instead of returning identity scalars here.
  *
- * Consumers (Phase 10.2 storage, 10.5 pairing, 10.6 approvals, …) depend
- * only on this interface. They do not see UniFFI, and — see
- * [CryptoException] on the JVM-heap limitation — they will not need to
- * change when Phase 10.2 swaps in a Keystore-backed implementation whose
- * secrets never leave native memory.
+ * Consumers depend only on these Kotlin interfaces and do not see
+ * UniFFI. The storage, pairing, and approval paths keep identity private
+ * keys in the Rust-owned handle; the primitive surface remains available
+ * for non-identity operations and fixture parity tests.
  *
  * ## Error convention
  *
@@ -31,21 +30,6 @@ interface ConveyanceCrypto {
 
     /** Generate a fresh 24-word BIP-39 phrase from 256 bits of OS entropy. */
     fun generateRecoveryPhrase(): RecoveryPhrase
-
-    /**
-     * Validate a phrase's checksum and derive both long-term identity
-     * keypairs (BIP-39 seed with an empty passphrase, then HKDF-BLAKE2s).
-     *
-     * **Not the production unlock path.** Production goes through
-     * [SealedIdentityCrypto], where identity secrets never enter the JVM
-     * heap. This returns raw key bytes and is retained only as the
-     * cross-implementation verification path for the fixture parity suite
-     * — hence `@RestrictTo(TESTS)`.
-     *
-     * @throws CryptoException.BadRecoveryPhrase if the phrase is invalid.
-     */
-    @androidx.annotation.RestrictTo(androidx.annotation.RestrictTo.Scope.TESTS)
-    fun deriveIdentity(phrase: RecoveryPhrase): IdentityKeys
 
     // -- Signing ----------------------------------------------------------
 
