@@ -103,6 +103,15 @@ impl StoredIdentity {
         })
     }
 
+    /// Derive the public half of the stored X25519 static identity.
+    /// Callers that need to publish or pin this key must not reach into
+    /// `x25519_secret` and accidentally publish its scalar bytes.
+    pub fn x25519_public_key(&self) -> [u8; 32] {
+        crate::crypto::dh::DhSecret::from_bytes(*self.x25519_secret.expose())
+            .public_key()
+            .to_bytes()
+    }
+
     pub fn save<P: KeyProvider, E: EntropySource>(
         &self,
         path: &Path,
@@ -282,6 +291,21 @@ mod tests {
             loaded.x25519_secret.expose(),
             identity.x25519_secret.expose()
         );
+    }
+
+    #[test]
+    fn x25519_public_accessor_derives_public_bytes_not_the_secret_scalar() {
+        let identity = StoredIdentity {
+            ed25519_secret: Secret::from_bytes([0x11; 32]),
+            x25519_secret: Secret::from_bytes([0x42; 32]),
+        };
+        let scalar = *identity.x25519_secret.expose();
+        let derived = crate::crypto::dh::DhSecret::from_bytes(scalar)
+            .public_key()
+            .to_bytes();
+
+        assert_eq!(identity.x25519_public_key(), derived);
+        assert_ne!(identity.x25519_public_key(), scalar);
     }
 
     #[test]
