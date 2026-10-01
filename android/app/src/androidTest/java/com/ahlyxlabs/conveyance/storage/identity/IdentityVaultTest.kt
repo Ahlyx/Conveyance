@@ -66,6 +66,63 @@ class IdentityVaultTest {
     }
 
     @Test
+    fun tierThreeBiometricReauthUsesFreshPurposeAndKeepsTheActiveSession() = runBlocking {
+        fixture.vault.createFromPhrase(
+            RecoveryPhrase(TEST_PHRASE),
+            Tier1AuthInput.Biometric(FakeBiometricGate()),
+        )
+        val session = fixture.vault.unlock(Tier1AuthInput.Biometric(FakeBiometricGate())).getOrThrow()
+        val gate = FakeBiometricGate()
+        try {
+            fixture.vault.reauthenticate(session, Tier1AuthInput.Biometric(gate)).getOrThrow()
+            assertEquals(AuthPurpose.HIGH_RISK_APPROVAL, gate.lastPurpose)
+            assertEquals(1, gate.calls)
+            assertTrue(session.identity.ed25519PublicKey().bytes.isNotEmpty())
+
+            val wrongMethodBytes = "this is a valid passphrase".toByteArray(Charsets.UTF_8)
+            val wrongMethod = fixture.vault.reauthenticate(
+                session,
+                Tier1AuthInput.Passphrase(wrongMethodBytes),
+            )
+            wrongMethodBytes.fill(0)
+            assertTrue(wrongMethod.isFailure)
+            assertTrue(wrongMethod.exceptionOrNull() is AuthMethodMismatchException)
+            assertEquals("method mismatch must not trigger biometric fallback", 1, gate.calls)
+            assertTrue(session.identity.ed25519PublicKey().bytes.isNotEmpty())
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
+    fun tierThreePassphraseReauthVerifiesExactConfiguredMethodAndKeepsSession() = runBlocking {
+        val chosen = "tier three  passphrase".toByteArray(Charsets.UTF_8)
+        fixture.vault.createFromPhrase(
+            RecoveryPhrase(TEST_PHRASE),
+            Tier1AuthInput.Passphrase(chosen),
+        )
+        chosen.fill(0)
+        val sessionBytes = "tier three  passphrase".toByteArray(Charsets.UTF_8)
+        val session = fixture.vault.unlock(Tier1AuthInput.Passphrase(sessionBytes)).getOrThrow()
+        sessionBytes.fill(0)
+        try {
+            val wrongBytes = "different passphrase".toByteArray(Charsets.UTF_8)
+            val wrong = fixture.vault.reauthenticate(session, Tier1AuthInput.Passphrase(wrongBytes))
+            wrongBytes.fill(0)
+            assertTrue(wrong.isFailure)
+            assertTrue(wrong.exceptionOrNull() is IdentityUnlockFailedException)
+            assertTrue(session.identity.ed25519PublicKey().bytes.isNotEmpty())
+
+            val exactBytes = "tier three  passphrase".toByteArray(Charsets.UTF_8)
+            fixture.vault.reauthenticate(session, Tier1AuthInput.Passphrase(exactBytes)).getOrThrow()
+            exactBytes.fill(0)
+            assertTrue(session.identity.ed25519PublicKey().bytes.isNotEmpty())
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test
     fun passphraseUsesExactUtf8BytesAndWrongInputFailsClosed() = runBlocking {
         val exactInput = "  e\u0301🗝abcdefghijkl  ".toByteArray(Charsets.UTF_8)
         fixture.vault.createFromPhrase(
