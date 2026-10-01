@@ -34,6 +34,7 @@ object StorageProvideModule {
     ): CredentialDatabase =
         Room.databaseBuilder(context, CredentialDatabase::class.java, CredentialDatabase.FILE_NAME)
             .openHelperFactory(SqlCipherFactory.create(passphrase.get()))
+            .addMigrations(CredentialDatabase.MIGRATION_1_2)
             .build()
 
     @Provides
